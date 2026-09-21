@@ -1,0 +1,11 @@
+{
+  "gatewayUrl": "https://inbox.example.com",
+  "token": "agent-message-token",
+  "managementToken": "agent-management-token",
+  "codexBinary": "/absolute/path/to/codex",
+  "stateDir": "/absolute/private/.agent-inbox-codex/state",
+  "hostLabel": "开发机",
+  "projects": [
+    { "id": "workspace", "name": "工作区", "path": "/absolute/project" }
+  ]
+}

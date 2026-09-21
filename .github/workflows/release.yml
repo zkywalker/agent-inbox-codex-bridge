@@ -1,0 +1,65 @@
+name: Release Bridge
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+          - name: darwin-arm64
+            runner: macos-14
+          - name: darwin-x64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p "release/codex-bridge-${version}-${{ matrix.name }}"
+          cp -R dist package.json package-lock.json README.md RELEASE.md "release/codex-bridge-${version}-${{ matrix.name }}/"
+          tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"
+          shasum -a 256 "codex-bridge-${version}-${{ matrix.name }}.tar.gz" > "codex-bridge-${version}-${{ matrix.name }}.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bridge-${{ matrix.name }}
+          path: |
+            codex-bridge-*.tar.gz
+            codex-bridge-*.sha256
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: codex-bridge-*.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: release
+          pattern: bridge-*
+          merge-multiple: true
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          find release -type f -name '*.sha256' -print0 | sort -z | xargs -0 cat > release/checksums.txt
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "Codex Bridge $version" --generate-notes
