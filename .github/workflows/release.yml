@@ -33,7 +33,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p "release/codex-bridge-${version}-${{ matrix.name }}"
-          cp -R dist package.json package-lock.json README.md RELEASE.md "release/codex-bridge-${version}-${{ matrix.name }}/"
+          cp -R dist package.json package-lock.json README.md RELEASE.md HOST-DEPLOYMENT.md supervisor "release/codex-bridge-${version}-${{ matrix.name }}/"
           tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"
           shasum -a 256 "codex-bridge-${version}-${{ matrix.name }}.tar.gz" > "codex-bridge-${version}-${{ matrix.name }}.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
