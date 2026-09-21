@@ -42,7 +42,7 @@ jobs:
           path: |
             codex-bridge-*.tar.gz
             codex-bridge-*.sha256
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: codex-bridge-*.tar.gz
 
