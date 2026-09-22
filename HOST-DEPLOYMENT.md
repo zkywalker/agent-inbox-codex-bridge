@@ -111,6 +111,9 @@ node "$HOME/.agent-inbox/codex-bridge/current/supervisor/supervisor.mjs"
   <key>EnvironmentVariables</key><dict>
     <key>AGENT_INBOX_BRIDGE_ROOT</key><string>/Users/YOUR_USER/.agent-inbox/codex-bridge</string>
     <key>AGENT_INBOX_BRIDGE_CONFIG</key><string>/Users/YOUR_USER/.agent-inbox/codex-bridge/config.json</string>
+    <key>HOME</key><string>/Users/YOUR_USER</string>
+    <!-- Must include the directory containing node. Codex's npm wrapper uses /usr/bin/env node. -->
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>WorkingDirectory</key><string>/Users/YOUR_USER/.agent-inbox/codex-bridge</string>
   <key>RunAtLoad</key><true/>

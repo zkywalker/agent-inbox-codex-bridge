@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import type { BridgeManagementRecord } from './bridge-management-update.js';
 import { createHash } from 'node:crypto';
 import type { CodexSession } from '../shared/codex.js';
 import type { RuntimeReport, CodexUpdateInfo } from '../shared/runtime.js';
@@ -38,6 +39,7 @@ export class BridgeState {
       CREATE TABLE IF NOT EXISTS project_directories (id TEXT PRIMARY KEY, root_id TEXT NOT NULL, path TEXT NOT NULL, UNIQUE(root_id,path));
       CREATE TABLE IF NOT EXISTS registered_projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory_id TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS native_update (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bridge_update (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS managed_connections (id TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS published_files (call_key TEXT PRIMARY KEY, body TEXT NOT NULL);
       UPDATE inputs SET state='uncertain' WHERE state='processing';`);
@@ -56,6 +58,13 @@ export class BridgeState {
     }
   }
   sessions(): Session[] { return this.db.prepare('SELECT body FROM sessions').all().map(row => JSON.parse(row.body as string)); }
+  bridgeUpdate(): BridgeManagementRecord | undefined {
+    const row = this.db.prepare('SELECT body FROM bridge_update WHERE id=1').get();
+    return row ? JSON.parse(row.body as string) : undefined;
+  }
+  saveBridgeUpdate(record: BridgeManagementRecord) {
+    this.db.prepare('INSERT INTO bridge_update(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(JSON.stringify(record));
+  }
   nativeUpdate(): CodexUpdateInfo | undefined {
     const row = this.db.prepare('SELECT body FROM native_update WHERE id=1').get();
     return row ? JSON.parse(row.body as string) : undefined;

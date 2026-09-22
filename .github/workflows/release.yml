@@ -34,7 +34,9 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           mkdir -p "release/codex-bridge-${version}-${{ matrix.name }}"
           cp -R dist package.json package-lock.json README.md RELEASE.md HOST-DEPLOYMENT.md supervisor "release/codex-bridge-${version}-${{ matrix.name }}/"
-          tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"
+          BRIDGE_BUILD_VERSION="$version" node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({version:process.env.BRIDGE_BUILD_VERSION}))' "release/codex-bridge-${version}-${{ matrix.name }}/bridge-version.json"
+          (cd "release/codex-bridge-${version}-${{ matrix.name }}" && npm ci --omit=dev --ignore-scripts --no-bin-links)
+          COPYFILE_DISABLE=1 tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"
           shasum -a 256 "codex-bridge-${version}-${{ matrix.name }}.tar.gz" > "codex-bridge-${version}-${{ matrix.name }}.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -59,10 +61,20 @@ jobs:
           path: release
           pattern: bridge-*
           merge-multiple: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.13.1
+      - name: Generate signed update manifest
+        env:
+          BRIDGE_MANIFEST_SIGNING_KEY: ${{ secrets.BRIDGE_MANIFEST_SIGNING_KEY }}
+        run: node scripts/create-release-manifest.mjs release "${GITHUB_REF_NAME#v}"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: release/manifest-bundle/manifest.json
       - name: Publish immutable release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           find release -type f -name '*.sha256' -print0 | sort -z | xargs -0 cat > release/checksums.txt
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "Codex Bridge $version" --generate-notes
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.sha256 release/checksums.txt release/manifest-bundle/manifest.json release/manifest-bundle/manifest.sig.json --verify-tag --title "Codex Bridge $version" --generate-notes

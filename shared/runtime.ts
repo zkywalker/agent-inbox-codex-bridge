@@ -1,4 +1,5 @@
 import type { CodexOptions, CodexSelection, CodexSettingsReport } from './codex-settings.js';
+import type { BridgeUpdatePlan } from './bridge-update.js';
 export type ModelApiMode = 'chat_completions' | 'anthropic_messages';
 
 export interface ModelConnection {
@@ -70,16 +71,31 @@ export interface CodexUpdateInfo {
   updatedAt: string;
 }
 
+export type BridgeUpdateStatus = 'idle' | 'staging' | 'restarting' | 'verifying' | 'succeeded' | 'failed' | 'uncertain';
+export type BridgeUpdateError = 'update_bridge_failed' | 'update_bridge_timeout' | 'update_bridge_reconnect_failed' | 'update_bridge_unavailable' | 'update_bridge_interrupted' | 'update_bridge_manifest_invalid';
+export interface BridgeUpdateInfo {
+  supported: boolean;
+  currentVersion: string | null;
+  targetVersion: string | null;
+  status: BridgeUpdateStatus;
+  operationId: string | null;
+  error: BridgeUpdateError | null;
+  updatedAt: string;
+}
+
 export function isCodexRuntimeVersion(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 256 && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(value);
 }
 
 export interface RuntimeReport {
+  codexInstanceId?: string;
   conversationId: string | null;
   runtimeVersion: string | null;
+  bridgeVersion?: string | null;
   capabilities: { inspect: boolean; switchModel: boolean; syncConnections: boolean; readFiles: boolean; reasoning?: boolean; manageProjects?: boolean; updateSettings?: boolean; manageSkills?: boolean; manageMcp?: boolean };
   codex?: CodexSettingsReport;
   codexUpdate?: CodexUpdateInfo;
+  bridgeUpdate?: BridgeUpdateInfo;
   reasoning?: { effort: string | null };
   environment?: RuntimeEnvironment;
   providers?: { id: string; name: string; apiMode: string; endpoint: string | null; current: boolean }[] | null;
@@ -102,14 +118,15 @@ export interface RuntimeReport {
   files: { id: string; name: string; source: string; loaded: boolean | null }[];
 }
 
-export type RuntimeRequestKind = 'inspect' | 'switch-model' | 'read-file' | 'browse-projects' | 'register-project' | 'update-settings' | 'set-skill' | 'set-mcp' | 'reload-mcp' | 'update-codex';
+export type RuntimeRequestKind = 'inspect' | 'switch-model' | 'read-file' | 'browse-projects' | 'register-project' | 'update-settings' | 'set-skill' | 'set-mcp' | 'reload-mcp' | 'update-codex' | 'update-bridge';
 export type RuntimeRequestStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'uncertain';
 export interface RuntimeRequest {
+  bridgeRelease?: BridgeUpdatePlan;
   id: string;
   agentId: string;
   conversationId: string | null;
   kind: RuntimeRequestKind;
-  payload: { choiceId?: string; fileId?: string; effort?: string; directoryId?: string; name?: string; settings?: CodexOptions; targetId?: string; enabled?: boolean };
+  payload: { choiceId?: string; fileId?: string; effort?: string; directoryId?: string; name?: string; settings?: CodexOptions; targetId?: string; enabled?: boolean; targetVersion?: string };
   status: RuntimeRequestStatus;
   error: string | null;
   result: { file?: { name: string; text: string; truncated: boolean; source: string }; listing?: ProjectListing; project?: { id: string; name: string; path: string } } | null;
@@ -125,6 +142,7 @@ export interface RuntimeView {
   report: RuntimeReport | null;
   codexDefaults?: CodexSelection;
   codexUpdateRequest?: { id: string; clientRequestId: string; status: RuntimeRequestStatus } | null;
+  bridgeUpdateRequest?: { id: string; clientRequestId: string; status: RuntimeRequestStatus } | null;
   sync: { desiredRevision: number; appliedRevision: number | null; error: string | null };
 }
 
@@ -152,6 +170,12 @@ export const runtimeErrorMessages: Record<string, string> = {
   update_reconnect_failed: 'Codex 更新后的重连验证失败，请在主机检查运行状态。',
   update_unavailable: '此主机暂不支持 Codex 自更新，请在主机检查安装方式与更新配置。',
   update_interrupted: 'Codex 更新被中断，结果尚未确认，请在主机检查后再操作。',
+  update_bridge_failed: 'Bridge 更新失败，请在主机检查安装与服务状态。',
+  update_bridge_timeout: 'Bridge 更新超时，结果尚未确认，请先检查主机状态。',
+  update_bridge_reconnect_failed: 'Bridge 更新后的重连验证失败，请在主机检查运行状态。',
+  update_bridge_unavailable: '此主机暂不支持 Bridge 自更新，请先升级主机部署。',
+  update_bridge_interrupted: 'Bridge 更新被中断，结果尚未确认，请在主机检查后再操作。',
+  update_bridge_manifest_invalid: 'Bridge 更新清单无效，请刷新可用版本后重试。',
 };
 
 export function runtimeError(code: string | null | undefined): string {

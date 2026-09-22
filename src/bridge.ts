@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { BridgeManagementUpdate, type BridgeManagementDriver } from './bridge-management-update.js';
 import type { CodexAction, CodexApproval, CodexView } from '../shared/codex.js';
 import type { Delivery, Message, Conversation } from '../shared/protocol.js';
 import type { RuntimeReport, RuntimeRequest, CodexUpdateInfo } from '../shared/runtime.js';
@@ -34,6 +35,8 @@ const nativeUpdateDriver: NativeUpdateDriver = { probe: probeCodexUpdate, readVe
 const updating = (status: CodexUpdateInfo['status']) => ['updating', 'restarting', 'verifying'].includes(status);
 
 export class CodexBridge {
+  readonly bridgeUpdate: BridgeManagementUpdate;
+  bridgeVersion: string | null = null;
   readonly gateway: Gateway;
   readonly sessions = new Map<string, Session>();
   readonly pending = new Map<string, PendingApproval>();
@@ -68,7 +71,8 @@ export class CodexBridge {
   private instanceReports = Promise.resolve();
   private connectionRevision = -1;
   private connectionSync: Promise<void> | null = null;
-  constructor(readonly config: BridgeConfig, public rpc: CodexRpc, readonly state: BridgeState, private readonly updater = nativeUpdateDriver) {
+  constructor(readonly config: BridgeConfig, public rpc: CodexRpc, readonly state: BridgeState, private readonly updater = nativeUpdateDriver, bridgeUpdater?: BridgeManagementDriver) {
+    this.bridgeUpdate = new BridgeManagementUpdate(state, bridgeUpdater);
     this.gateway = new Gateway(config);
     this.defaultOptions = selectCodexOptions(config.defaultCodexSettings ?? {});
     this.projects = new Projects(config, state);
@@ -125,7 +129,7 @@ export class CodexBridge {
     this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}) });
   }
   async initialize() {
-    await this.initializeNative();
+    await this.initializeNative(!!process.env.BRIDGE_UPDATE_OPERATION_ID);
     await this.refreshUpdateSupport();
     await this.register();
   }
@@ -177,8 +181,8 @@ export class CodexBridge {
     this.updateInfo = { ...this.updateInfo, ...patch, updatedAt: new Date().toISOString() };
     this.state.saveNativeUpdate(this.updateInfo);
   }
-  private updateBusy() {
-    return updating(this.updateInfo.status) || this.updateInfo.status === 'uncertain' || this.configurationChanging || this.inputTasks.size > 0 || this.locks.size > 0
+  private updateBusy(includeBridge = true) {
+    return includeBridge && this.bridgeUpdate.busy || updating(this.updateInfo.status) || this.updateInfo.status === 'uncertain' || this.configurationChanging || this.inputTasks.size > 0 || this.locks.size > 0
       || [...this.sessions.values()].some(session => ['running', 'waiting', 'unknown'].includes(session.state))
       || [...this.pending.values()].some(approval => !approval.resolved);
   }
@@ -301,6 +305,9 @@ export class CodexBridge {
     const providerLabel = inventory?.providers?.find(item => item.id === provider)?.name || (provider === 'codex' ? 'Codex 已配置连接' : provider);
     return {
       conversationId: session?.conversationId ?? null, runtimeVersion: this.runtimeReady ? this.version : null,
+      ...(!session && this.bridgeVersion ? { bridgeVersion: this.bridgeVersion } : {}),
+      codexInstanceId: this.epoch,
+      ...(!session && this.bridgeUpdate.info ? { bridgeUpdate: this.bridgeUpdate.info } : {}),
       ...(!session ? { codexUpdate: this.updateInfo } : {}),
       capabilities: { inspect: true, switchModel: true, syncConnections: true, readFiles: false, reasoning: true, manageProjects: this.projects.enabled, updateSettings: !!this.allowed, manageSkills: !!session && !!inventory?.skills?.some(item => item.mutable), manageMcp: !!session && !!inventory?.mcp?.some(item => item.mutable) },
       ...(this.allowed ? { codex: { values: session ? settingsValues(session.nativeSettings ?? {}) : this.defaultOptions, source: session ? 'runtime' as const : 'defaults' as const, allowed: this.allowed } } : {}),
@@ -490,7 +497,7 @@ export class CodexBridge {
       const prior = this.state.input(delivery.message.id);
       if (prior === 'accepted') { await this.ack(delivery, true); return; }
       if (prior === 'processing' || prior === 'uncertain') { await this.ack(delivery, false, '上次原生接收结果不确定，未重复执行。请查看回复后发送新消息继续。'); return; }
-      if (updating(this.updateInfo.status) || this.updateInfo.status === 'uncertain' || !this.runtimeReady) { await this.ack(delivery, false, 'Codex 正在更新、重连或等待主机确认，请恢复后手动重试。'); return; }
+      if (this.bridgeUpdate.busy || updating(this.updateInfo.status) || this.updateInfo.status === 'uncertain' || !this.runtimeReady) { await this.ack(delivery, false, 'Codex 正在更新、重连或等待主机确认，请恢复后手动重试。'); return; }
       if (!this.registered) { await this.ack(delivery, false, 'Codex 管理连接未就绪，请稍后手动重试。'); return; }
       if (this.configurationChanging) { await this.ack(delivery, false, '主机正在修改全局配置，请完成后手动重试。'); return; }
       let session: Session;
@@ -800,6 +807,11 @@ export class CodexBridge {
     const session = request.conversationId ? this.sessions.get(request.conversationId) : null;
     try {
       if (request.kind === 'update-codex') { await this.startUpdate(request); return; }
+      if (request.kind === 'update-bridge') {
+        await this.bridgeUpdate.start(request, this.bridgeVersion, this.epoch, () => !this.stopped && this.registered && this.runtimeReady && !this.updateBusy() && !this.updateTask && !this.connectionSync && !this.state.dirty().length);
+        return;
+      }
+      if (this.bridgeUpdate.busy) throw new Error('busy');
       if (updating(this.updateInfo.status) || this.updateTask || this.updateInfo.status === 'uncertain' && !['inspect', 'browse-projects', 'read-file'].includes(request.kind)) throw new Error('busy');
       if (!this.runtimeReady && request.kind !== 'browse-projects') throw new Error('unavailable');
       if (request.kind === 'read-file') throw new Error('unsupported');
@@ -832,7 +844,11 @@ export class CodexBridge {
       }
       await this.gateway.call(`/connector/runtime/requests/${request.id}/result`, { ok: true, report: this.report(session ?? null), ...(result ? { result } : {}) }, true);
     } catch (e) {
-      const code = e instanceof Error && ['busy', 'unsupported', 'not_applied', 'unavailable', 'update_unavailable'].includes(e.message) ? e.message : 'failed';
+      if (request.kind === 'update-bridge' && this.bridgeUpdate.reject(request, this.bridgeVersion, this.epoch)) {
+        await this.publishBridgeUpdateResult();
+        return;
+      }
+      const code = e instanceof Error && ['busy', 'unsupported', 'not_applied', 'unavailable', 'update_unavailable', 'update_bridge_unavailable', 'update_bridge_manifest_invalid'].includes(e.message) ? e.message : 'failed';
       await this.gateway.call(`/connector/runtime/requests/${request.id}/result`, { ok: false, error: code }, true);
     }
   }
@@ -861,6 +877,7 @@ export class CodexBridge {
     while (!this.stopped) {
       try {
         if (!this.registered) { await pause(500); continue; }
+        if (this.bridgeUpdate.busy) { await pause(500); continue; }
         const inbox = await this.gateway.call<{ deliveries: Delivery[] }>('/connector/inbox?wait=20');
         for (const delivery of inbox.deliveries) {
           const task = this.accept(delivery).catch(() => this.log('input handling failed'));
@@ -876,12 +893,13 @@ export class CodexBridge {
         if (!this.registered) await this.register();
         await this.publishInstance();
         await this.publishUpdateResult();
+        await this.publishBridgeUpdateResult();
         await this.syncManagedConnections();
         for (const id of this.dirtySessions) { const session = this.sessions.get(id); if (session) await this.publishSession(session); }
         await this.publishApprovals();
         const inbox = await this.gateway.call<{ actions: CodexAction[] }>(`/connector/codex/inbox?instanceId=${this.epoch}`, undefined, true);
-        for (const action of inbox.actions) await this.control(action);
-        const runtime = await this.gateway.call<{ requests: RuntimeRequest[] }>('/connector/runtime/inbox?wait=0', undefined, true);
+        for (const action of inbox.actions) { if (!this.bridgeUpdate.busy) await this.control(action); }
+        const runtime = await this.gateway.call<{ requests: RuntimeRequest[] }>(`/connector/runtime/inbox?wait=0&instanceId=${this.epoch}`, undefined, true);
         for (const request of runtime.requests) await this.runtimeControl(request);
       } catch (error) {
         if (error instanceof GatewayError && [401, 403, 409].includes(error.status)) this.registered = false;
@@ -896,5 +914,22 @@ export class CodexBridge {
       await pause(400);
     }
   }
+  private async publishBridgeUpdateResult() {
+    await this.bridgeUpdate.publish(async confirmation => {
+      if (!this.runtimeReady || !this.registered || this.updateBusy(false)) throw new Error('Bridge runtime is not ready for confirmation');
+      await this.gateway.call(`/connector/runtime/requests/${confirmation.operationId}/result`, { ok: confirmation.outcome === 'succeeded', bridgeConfirmation: confirmation, report: { ...this.report(null), busy: false } }, true);
+    });
+  }
   stop() { this.stopped = true; this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
+  supervisorIdentity() {
+    if (!this.registered || !this.runtimeReady || !this.version || [...this.sessions.values()].some(session => ['unknown', 'failed'].includes(session.state))) return null;
+    return { instanceId: this.epoch, version: this.bridgeVersion };
+  }
+  async stopAndWait() { this.stopped = true; this.updateAbort.abort(); this.files.stop(); await this.bridgeUpdate.stop(); await this.rpc.closeAndWait(); }
+  resumeBridgeUpdate(operationId: string | null) {
+    if (this.bridgeVersion) this.bridgeUpdate.resume(operationId, this.bridgeVersion, this.epoch);
+  }
+  observeBridgeUpdate(value: unknown) {
+    if (this.bridgeVersion) this.bridgeUpdate.observe(value, this.bridgeVersion, this.epoch);
+  }
 }

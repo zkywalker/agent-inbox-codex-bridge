@@ -4,6 +4,8 @@ import { CodexBridge } from './bridge.js';
 import { CodexRpc } from './rpc.js';
 import { BridgeState } from './state.js';
 import { describeStartupError, parseBridgeConfig } from './config.js';
+import { z } from 'zod';
+import { bridgeManagementDriver } from './bridge-management-update.js';
 
 async function main() {
   const validateOnly = process.argv[2] === '--validate';
@@ -28,10 +30,40 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  const nonce = process.env.BRIDGE_SUPERVISOR_NONCE;
+  let bridgeUpdater;
+  try {
+    if (nonce && process.send && process.env.AGENT_INBOX_BRIDGE_UPDATES === '1' && process.env.AGENT_INBOX_BRIDGE_ROOT && process.env.BRIDGE_RELEASE_PUBLIC_KEYS_FILE) {
+      const keys = z.array(z.string().min(1).max(4096)).min(1).max(16).parse(JSON.parse(await readFile(process.env.BRIDGE_RELEASE_PUBLIC_KEYS_FILE, 'utf8')));
+      bridgeUpdater = bridgeManagementDriver(process.env.AGENT_INBOX_BRIDGE_ROOT, path, keys, message => new Promise((resolveSent, reject) => {
+        if (!process.connected || !process.send) { reject(new Error('Supervisor disconnected')); return; }
+        process.send({ ...message, nonce }, error => error ? reject(new Error('Supervisor IPC unavailable')) : resolveSent());
+      }));
+    }
+  } catch { state.close(); throw new Error('Invalid Bridge update trust configuration'); }
   const rpc = new CodexRpc(config.codexBinary, undefined, config.projects[0].path);
-  const bridge = new CodexBridge(config, rpc, state);
-  process.once('SIGINT', () => bridge.stop()); process.once('SIGTERM', () => bridge.stop());
-  try { await bridge.initialize(); console.log('[codex-bridge] ready'); await bridge.run(); }
-  finally { bridge.stop(); state.close(); }
+  const bridge = new CodexBridge(config, rpc, state, undefined, bridgeUpdater);
+  let shutdown: Promise<void> | undefined;
+  const stop = () => { shutdown ??= bridge.stopAndWait(); void shutdown.catch(() => { process.exitCode = 1; }); };
+  process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  process.on('message', (message: any) => {
+    if (!nonce || message?.nonce !== nonce) return;
+    if (message.type === 'bridge-supervisor-stop') stop();
+    if (message.type === 'bridge-update-result') bridge.observeBridgeUpdate(message.result);
+  });
+  try {
+    try { bridge.bridgeVersion = z.object({ version: z.string().max(64).regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/) }).strict().parse(JSON.parse(await readFile(new URL('../../bridge-version.json', import.meta.url), 'utf8'))).version; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    bridge.resumeBridgeUpdate(process.env.BRIDGE_UPDATE_OPERATION_ID || null);
+    await bridge.initialize();
+    const identity = bridge.supervisorIdentity();
+    if (process.send && nonce && identity) process.send({ type: 'bridge-ready', nonce, operationId: process.env.BRIDGE_UPDATE_OPERATION_ID || null, ...identity });
+    console.log('[codex-bridge] ready'); await bridge.run();
+  } finally {
+    try {
+      await bridge.stopAndWait(); state.close();
+      if (process.send && nonce) process.send({ type: 'bridge-stopped', nonce }, () => { if (process.connected) process.disconnect(); });
+    } catch { state.close(); throw new Error('Bridge shutdown requires host recovery'); }
+  }
 }
 void main().catch(error => { console.error(`[codex-bridge] startup or runtime failed: ${describeStartupError(error)}`); process.exitCode = 1; });
