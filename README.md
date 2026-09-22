@@ -26,7 +26,7 @@ node dist/src/main.js --validate /absolute/path/to/private-config.json
 
 稳定版本只从受保护的 `v*` 标签发布。GitHub Actions 会运行检查、构建 bundle、生成校验清单、SBOM 和 provenance attestation，然后创建 Release。发布前必须在 GitHub 仓库设置中启用分支保护、标签保护、环境审批和 Dependabot。
 
-发布流程和主机升级契约见 `RELEASE.md`。Bridge 不接受远程 URL、shell 命令、任意安装路径或任意版本参数。
+发布流程和主机升级契约见 `RELEASE.md`；首次安装、服务托管、人工升级和回滚见 `HOST-DEPLOYMENT.md`。Bridge 不接受远程 URL、shell 命令、任意安装路径或任意版本参数。
 
 ## 安全
 

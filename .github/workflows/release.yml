@@ -19,7 +19,7 @@ jobs:
           - name: darwin-arm64
             runner: macos-14
           - name: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -33,7 +33,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p "release/codex-bridge-${version}-${{ matrix.name }}"
-          cp -R dist package.json package-lock.json README.md RELEASE.md "release/codex-bridge-${version}-${{ matrix.name }}/"
+          cp -R dist package.json package-lock.json README.md RELEASE.md HOST-DEPLOYMENT.md supervisor "release/codex-bridge-${version}-${{ matrix.name }}/"
           tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"
           shasum -a 256 "codex-bridge-${version}-${{ matrix.name }}.tar.gz" > "codex-bridge-${version}-${{ matrix.name }}.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -51,6 +51,9 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: release
