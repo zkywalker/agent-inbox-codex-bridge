@@ -308,6 +308,7 @@ export class CodexBridge {
       ...(!session && this.bridgeVersion ? { bridgeVersion: this.bridgeVersion } : {}),
       codexInstanceId: this.epoch,
       ...(!session && this.bridgeUpdate.info ? { bridgeUpdate: this.bridgeUpdate.info } : {}),
+      ...(!session && this.bridgeUpdate.capability ? { bridgeUpdateCapability: this.bridgeUpdate.capability } : {}),
       ...(!session ? { codexUpdate: this.updateInfo } : {}),
       capabilities: { inspect: true, switchModel: true, syncConnections: true, readFiles: false, reasoning: true, manageProjects: this.projects.enabled, updateSettings: !!this.allowed, manageSkills: !!session && !!inventory?.skills?.some(item => item.mutable), manageMcp: !!session && !!inventory?.mcp?.some(item => item.mutable) },
       ...(this.allowed ? { codex: { values: session ? settingsValues(session.nativeSettings ?? {}) : this.defaultOptions, source: session ? 'runtime' as const : 'defaults' as const, allowed: this.allowed } } : {}),

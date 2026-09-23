@@ -1,5 +1,6 @@
 import type { CodexOptions, CodexSelection, CodexSettingsReport } from './codex-settings.js';
 import type { BridgeUpdatePlan } from './bridge-update.js';
+import type { BridgePlatform } from './bridge-release.js';
 export type ModelApiMode = 'chat_completions' | 'anthropic_messages';
 
 export interface ModelConnection {
@@ -96,6 +97,7 @@ export interface RuntimeReport {
   codex?: CodexSettingsReport;
   codexUpdate?: CodexUpdateInfo;
   bridgeUpdate?: BridgeUpdateInfo;
+  bridgeUpdateCapability?: { platform: BridgePlatform; safeRetry: boolean };
   reasoning?: { effort: string | null };
   environment?: RuntimeEnvironment;
   providers?: { id: string; name: string; apiMode: string; endpoint: string | null; current: boolean }[] | null;
@@ -135,6 +137,7 @@ export interface RuntimeRequest {
 }
 
 export interface RuntimeView {
+  bridgeUpdateAllowed?: boolean;
   enabled: boolean;
   online: boolean;
   lastSeenAt: string | null;

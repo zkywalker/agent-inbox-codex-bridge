@@ -57,6 +57,36 @@ export interface BridgeHostUpdateOptions {
   signal?: AbortSignal;
   now?: () => number;
 }
+export interface BridgeRetryProof {
+  operationId: string;
+  manifestSha256: string;
+  fromVersion: string;
+  targetVersion: string;
+}
+async function quarantineFailedCandidate(root: string, target: string, downloaded: { version: string; manifestSha256: string }, options: BridgeHostUpdateOptions, proof?: BridgeRetryProof) {
+  if (!proof || proof.targetVersion !== downloaded.version || proof.fromVersion !== options.currentVersion || proof.manifestSha256 !== downloaded.manifestSha256) throw new Error('Bridge target version already exists');
+  const state = await privateDirectory(root, 'state');
+  const file = await open(join(state, 'bridge-update.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let journal;
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > 4096) throw new Error('Invalid Supervisor journal');
+    journal = JSON.parse(await file.readFile('utf8'));
+  } finally { await file.close(); }
+  if (journal.operationId !== proof.operationId || journal.status !== 'failed' || journal.error !== 'startup_failed' || journal.fromVersion !== proof.fromVersion || journal.toVersion !== proof.targetVersion || journal.manifestSha256 !== proof.manifestSha256) throw new Error('Bridge rollback not confirmed');
+  for (const name of ['current', 'previous']) {
+    if (!(await lstat(join(root, name))).isSymbolicLink() || await realpath(join(root, name)) !== join(root, 'versions', options.currentVersion)) throw new Error('Bridge candidate may still be in use');
+  }
+  const prepared = await verifyPreparedBridge(root, downloaded.version, proof.operationId, options.trustedPublicKeys, options.currentVersion);
+  if (prepared.manifestSha256 !== proof.manifestSha256) throw new Error('Bridge retry receipt differs from rollback');
+  options.signal?.throwIfAborted();
+  const quarantine = await privateDirectory(root, 'quarantine');
+  await rename(target, join(quarantine, `${downloaded.version}-${proof.operationId}-${randomUUID()}`));
+  for (const directory of [quarantine, join(root, 'versions'), root]) {
+    const handle = await open(directory, constants.O_RDONLY);
+    try { await handle.sync(); } finally { await handle.close(); }
+  }
+}
 export async function downloadBridgeRelease(snapshot: BridgeReleaseSnapshot, options: BridgeHostUpdateOptions) {
   const verified = verifyBridgeSnapshot(snapshot, options.trustedPublicKeys, options.currentVersion, options.now?.() ?? Date.now());
   const platform = hostBridgePlatform(), asset = verified.manifest.assets.find(candidate => candidate.platform === platform)!;
@@ -128,14 +158,19 @@ export async function validateBridgeBundle(directory: string, configPath: string
   await runBridgeProgram(join(directory, 'dist/src/main.js'), ['--validate', configPath], directory, signal, 30_000);
 }
 
-export async function prepareBridgeRelease(operationId: string, snapshot: BridgeReleaseSnapshot, options: BridgeHostUpdateOptions & { configPath: string }) {
+export async function prepareBridgeRelease(operationId: string, snapshot: BridgeReleaseSnapshot, options: BridgeHostUpdateOptions & { configPath: string; retryProof?: BridgeRetryProof }) {
   z.string().uuid().parse(operationId);
   const downloaded = await downloadBridgeRelease(snapshot, options);
   const root = await installationRoot(options.root), versions = await privateDirectory(root, 'versions');
   const signal = AbortSignal.any([options.signal ?? new AbortController().signal, AbortSignal.timeout(10 * 60_000)]);
   const target = join(versions, downloaded.version), staging = join(versions, `.staging-${operationId}`);
-  try { await lstat(target); throw new Error('Bridge target version already exists'); }
+  let exists = false;
+  try { await lstat(target); exists = true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (exists) {
+    if (options.retryProof?.operationId === operationId) throw new Error('Bridge retry requires a new operation');
+    await quarantineFailedCandidate(root, target, downloaded, { ...options, signal }, options.retryProof);
+  }
   await mkdir(staging, { mode: 0o700 });
   try {
     const expectedRoot = `codex-bridge-${downloaded.version}-${downloaded.platform}`;

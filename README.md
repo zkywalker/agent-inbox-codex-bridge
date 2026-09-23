@@ -30,4 +30,12 @@ node dist/src/main.js --validate /absolute/path/to/private-config.json
 
 ## 安全
 
+### Canary 更新与重试
+
+启用更新驱动的 Bridge 会在实例管理报告中提供 `bridgeUpdateCapability`（实际平台与 `safeRetry:true`）。须先部署支持此字段的兼容网关，再升级主机；网关白名单、公钥和本机更新开关仍分别生效。旧版主机继续兼容，但不具备新网页安全重试能力，需要先通过既有受控管理流程升级。
+
+同版本失败候选不再一律要求人工移走：只有上一操作已确认回滚并收到网关 ACK、确认实例仍为当前实例、Supervisor 的失败 journal 和候选 receipt 均匹配、current/previous 都指向原版本时，新操作才可将旧候选原子隔离到安装根目录的私有 `quarantine`，然后重新准备。旧目录与 receipt 原样保留，缓存仍需验签及摘要检查；不自动删除隔离目录。
+
+缺失 ACK、普通准备失败、实例变化、签名过期、在用候选、路径异常或 uncertain 均不允许自动隔离。中断后仍需核查维护与主机状态，不能靠重启或改数据库伪造结案。此能力不自动更新固定 Supervisor，也不扩大普通 Agent 的远端权限。
+
 请勿提交网关 Token、管理 Token、API Key、私有配置、SQLite 数据库或主机路径。漏洞报告见 `SECURITY.md`。

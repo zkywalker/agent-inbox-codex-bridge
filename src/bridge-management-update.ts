@@ -3,13 +3,13 @@ import type { RuntimeRequest, BridgeUpdateInfo } from '../shared/runtime.js';
 import type { BridgeUpdateConfirmation } from '../shared/bridge-update.js';
 import type { BridgeState } from './state.js';
 import { BRIDGE_PLATFORMS } from '../shared/bridge-release.js';
-import { hostBridgePlatform, verifyBridgeSnapshot, prepareBridgeRelease } from './bridge-host-update.js';
+import { hostBridgePlatform, verifyBridgeSnapshot, prepareBridgeRelease, type BridgeRetryProof } from './bridge-host-update.js';
 
 const planSchema = z.object({ snapshot: z.object({ manifest: z.string().max(24 * 1024), signature: z.string().max(4096) }).strict(), manifestSha256: z.string().regex(/^[a-f0-9]{64}$/), platform: z.enum(BRIDGE_PLATFORMS), fromVersion: z.string().max(64), fromInstanceId: z.string().uuid() }).strict();
 
 export interface BridgeManagementDriver {
   keys: readonly string[];
-  prepare: (request: RuntimeRequest, signal: AbortSignal) => Promise<{ manifestSha256: string }>;
+  prepare: (request: RuntimeRequest, signal: AbortSignal, retryProof?: BridgeRetryProof) => Promise<{ manifestSha256: string }>;
   notify: (message: { type: 'bridge-update-ready'; operationId: string; version: string } | { type: 'bridge-update-status' }) => Promise<void>;
 }
 export interface BridgeManagementRecord {
@@ -27,6 +27,7 @@ export class BridgeManagementUpdate {
   }
   get busy() { return !!this.record && !this.record.acknowledged; }
   get info() { return this.record?.info; }
+  get capability() { return this.driver ? { platform: hostBridgePlatform(), safeRetry: true } : undefined; }
   private save(record: BridgeManagementRecord) { this.state.saveBridgeUpdate(record); this.record = record; }
   resume(operationId: string | null, version: string, instanceId: string) {
     if (!this.record || this.record.acknowledged) return;
@@ -49,8 +50,11 @@ export class BridgeManagementUpdate {
     if (plan.fromVersion !== version || plan.fromInstanceId !== instanceId || plan.platform !== hostBridgePlatform()) throw new Error('update_bridge_manifest_invalid');
     const verified = verifyBridgeSnapshot(plan.snapshot, this.driver.keys, version);
     if (verified.manifestSha256 !== plan.manifestSha256 || verified.manifest.version !== request.payload.targetVersion) throw new Error('update_bridge_manifest_invalid');
+    const previous = this.record;
+    const retryProof = previous?.acknowledged && previous.info.status === 'failed' && previous.confirmation?.outcome === 'rolled-back' && previous.confirmation.instanceId === instanceId && previous.request.bridgeRelease && previous.request.payload.targetVersion === request.payload.targetVersion
+      ? { operationId: previous.request.id, manifestSha256: previous.confirmation.manifestSha256, fromVersion: previous.request.bridgeRelease.fromVersion, targetVersion: previous.request.payload.targetVersion } : undefined;
     this.save({ request, confirmation: null, acknowledged: false, info: { supported: true, currentVersion: version, targetVersion: request.payload.targetVersion!, operationId: request.id, status: 'staging', error: null, updatedAt: new Date().toISOString() } });
-    this.task = this.prepare(request, version, instanceId).finally(() => { this.task = null; });
+    this.task = this.prepare(request, version, instanceId, retryProof).finally(() => { this.task = null; });
   }
   reject(request: RuntimeRequest, version: string | null, instanceId: string) {
     const plan = planSchema.safeParse(request.bridgeRelease);
@@ -59,10 +63,10 @@ export class BridgeManagementUpdate {
     this.terminal('failed', version, instanceId);
     return true;
   }
-  private async prepare(request: RuntimeRequest, version: string, instanceId: string) {
+  private async prepare(request: RuntimeRequest, version: string, instanceId: string, retryProof?: BridgeRetryProof) {
     let handedOff = false;
     try {
-      const prepared = await this.driver!.prepare(request, this.abort.signal);
+      const prepared = await this.driver!.prepare(request, this.abort.signal, retryProof);
       this.abort.signal.throwIfAborted();
       if (prepared.manifestSha256 !== request.bridgeRelease!.manifestSha256) throw new Error('Prepared digest mismatch');
       this.save({ ...this.record!, info: { ...this.record!.info, status: 'restarting', updatedAt: new Date().toISOString() } });
@@ -98,5 +102,5 @@ export class BridgeManagementUpdate {
 }
 
 export function bridgeManagementDriver(root: string, configPath: string, keys: readonly string[], notify: BridgeManagementDriver['notify']): BridgeManagementDriver {
-  return { keys, notify, prepare: (request, signal) => prepareBridgeRelease(request.id, request.bridgeRelease!.snapshot, { root, configPath, trustedPublicKeys: keys, currentVersion: request.bridgeRelease!.fromVersion, signal }) };
+  return { keys, notify, prepare: (request, signal, retryProof) => prepareBridgeRelease(request.id, request.bridgeRelease!.snapshot, { root, configPath, trustedPublicKeys: keys, currentVersion: request.bridgeRelease!.fromVersion, signal, retryProof }) };
 }
