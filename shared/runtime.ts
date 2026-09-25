@@ -1,7 +1,10 @@
 import type { CodexOptions, CodexSelection, CodexSettingsReport } from './codex-settings.js';
 import type { BridgeUpdatePlan } from './bridge-update.js';
 import type { BridgePlatform } from './bridge-release.js';
-export type ModelApiMode = 'chat_completions' | 'anthropic_messages';
+export type ModelApiMode = 'chat_completions' | 'responses' | 'anthropic_messages';
+
+export interface ClaudeSettings { permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions'; effort?: 'low' | 'medium' | 'high' | 'max' }
+export type ClaudeSelection = ClaudeSettings & { model?: string; provider?: string };
 
 export interface ModelConnection {
   id: string;
@@ -89,11 +92,15 @@ export function isCodexRuntimeVersion(value: unknown): value is string {
 }
 
 export interface RuntimeReport {
+  claude?: { settings: ClaudeSettings; source: 'configuration' | 'runtime'; conversion: 'native' | 'chat_completions' | 'responses' };
+  claudeUpdate?: CodexUpdateInfo;
   codexInstanceId?: string;
+  claudeInstanceId?: string;
+  maintenance?: boolean;
   conversationId: string | null;
   runtimeVersion: string | null;
   bridgeVersion?: string | null;
-  capabilities: { inspect: boolean; switchModel: boolean; syncConnections: boolean; readFiles: boolean; reasoning?: boolean; manageProjects?: boolean; updateSettings?: boolean; manageSkills?: boolean; manageMcp?: boolean };
+  capabilities: { inspect: boolean; switchModel: boolean; syncConnections: boolean; readFiles: boolean; reasoning?: boolean; manageProjects?: boolean; updateSettings?: boolean; manageSkills?: boolean; manageMcp?: boolean; initialSelection?: boolean; defaultsWhileBusy?: boolean; claudeBypassPermissions?: boolean };
   codex?: CodexSettingsReport;
   codexUpdate?: CodexUpdateInfo;
   bridgeUpdate?: BridgeUpdateInfo;
@@ -120,7 +127,7 @@ export interface RuntimeReport {
   files: { id: string; name: string; source: string; loaded: boolean | null }[];
 }
 
-export type RuntimeRequestKind = 'inspect' | 'switch-model' | 'read-file' | 'browse-projects' | 'register-project' | 'update-settings' | 'set-skill' | 'set-mcp' | 'reload-mcp' | 'update-codex' | 'update-bridge';
+export type RuntimeRequestKind = 'inspect' | 'switch-model' | 'read-file' | 'browse-projects' | 'register-project' | 'update-settings' | 'update-claude-settings' | 'set-skill' | 'set-mcp' | 'reload-mcp' | 'update-codex' | 'update-claude' | 'update-bridge';
 export type RuntimeRequestStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'uncertain';
 export interface RuntimeRequest {
   bridgeRelease?: BridgeUpdatePlan;
@@ -128,7 +135,7 @@ export interface RuntimeRequest {
   agentId: string;
   conversationId: string | null;
   kind: RuntimeRequestKind;
-  payload: { choiceId?: string; fileId?: string; effort?: string; directoryId?: string; name?: string; settings?: CodexOptions; targetId?: string; enabled?: boolean; targetVersion?: string };
+  payload: { choiceId?: string; fileId?: string; effort?: string; directoryId?: string; name?: string; settings?: CodexOptions; claudeSettings?: ClaudeSettings; targetId?: string; enabled?: boolean; targetVersion?: string };
   status: RuntimeRequestStatus;
   error: string | null;
   result: { file?: { name: string; text: string; truncated: boolean; source: string }; listing?: ProjectListing; project?: { id: string; name: string; path: string } } | null;
@@ -172,7 +179,7 @@ export const runtimeErrorMessages: Record<string, string> = {
   update_timeout: 'Codex 更新超时，结果尚未确认，请在主机检查后再操作。',
   update_reconnect_failed: 'Codex 更新后的重连验证失败，请在主机检查运行状态。',
   update_unavailable: '此主机暂不支持 Codex 自更新，请在主机检查安装方式与更新配置。',
-  update_interrupted: 'Codex 更新被中断，结果尚未确认，请在主机检查后再操作。',
+  update_interrupted: '原生运行时更新被中断，结果尚未确认，请在主机检查后再操作。',
   update_bridge_failed: 'Bridge 更新失败，请在主机检查安装与服务状态。',
   update_bridge_timeout: 'Bridge 更新超时，结果尚未确认，请先检查主机状态。',
   update_bridge_reconnect_failed: 'Bridge 更新后的重连验证失败，请在主机检查运行状态。',

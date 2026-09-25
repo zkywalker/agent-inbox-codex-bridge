@@ -8,7 +8,7 @@ import type { BridgeState } from './state.js';
 // Only directory IDs returned by this host can be browsed or registered.
 // Recheck both the configured root and the directory on every use.
 export class Projects {
-  constructor(private config: BridgeConfig, private state: BridgeState) {}
+  constructor(private config: Pick<BridgeConfig, 'projects' | 'projectRoots'>, private state: BridgeState) {}
   get enabled() { return !!this.config.projectRoots?.length; }
   private async checked(rootId: string, path: string) {
     const root = this.config.projectRoots?.find(root => root.id === rootId);

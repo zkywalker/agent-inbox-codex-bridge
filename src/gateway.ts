@@ -22,7 +22,7 @@ export class GatewayError extends Error {
 export class Gateway {
   readonly base: URL;
   readonly maxFileBytes: number;
-  constructor(readonly config: BridgeConfig) {
+  constructor(readonly config: Omit<BridgeConfig, 'codexBinary' | 'managementToken'> & { codexBinary?: string; managementToken?: string }) {
     this.base = new URL(config.gatewayUrl);
     if (this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/' || (this.base.protocol !== 'https:' && !(this.base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(this.base.hostname)))) throw new Error('gatewayUrl must be an HTTPS origin (HTTP allowed only on localhost)');
     this.maxFileBytes = Math.min(config.maxFileBytes ?? 25 * 1024 * 1024, 25 * 1024 * 1024);
@@ -31,7 +31,10 @@ export class Gateway {
     if (!path.startsWith('/api/') || new URL(path, this.base).origin !== this.base.origin) throw new Error('Invalid Inbox endpoint');
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${this.config.token}`);
-    if (management) headers.set('X-Agent-Inbox-Management-Token', this.config.managementToken);
+    if (management) {
+      if (!this.config.managementToken) throw new Error('Management credential required');
+      headers.set('X-Agent-Inbox-Management-Token', this.config.managementToken);
+    }
     if (this.config.accessClientId) headers.set('CF-Access-Client-Id', this.config.accessClientId);
     if (this.config.accessClientSecret) headers.set('CF-Access-Client-Secret', this.config.accessClientSecret);
     const response = await fetch(new URL(path, this.base), { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(28_000) });

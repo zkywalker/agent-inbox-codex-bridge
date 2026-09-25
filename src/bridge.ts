@@ -389,7 +389,7 @@ export class CodexBridge {
       if (desired.connections === null) { this.connectionRevision = desired.revision; return; }
       if (!Array.isArray(desired.connections) || desired.connections.length > 50) throw new Error('unsupported');
       const connections: ManagedConnection[] = desired.connections.map(connection => {
-        if (connection.apiMode !== 'chat_completions' || typeof connection.apiKey !== 'string' || !connection.apiKey || !/^https:\/\//.test(connection.baseUrl)) throw new Error('unsupported');
+        if (!['chat_completions', 'responses'].includes(connection.apiMode) || typeof connection.apiKey !== 'string' || !connection.apiKey || !/^https:\/\//.test(connection.baseUrl)) throw new Error('unsupported');
         const providerId = this.providerId(connection.id), envKey = this.providerEnvKey(connection.id);
         return { id: connection.id, name: String(connection.name).slice(0, 200), baseUrl: String(connection.baseUrl).slice(0, 2048), apiMode: connection.apiMode, models: Array.isArray(connection.models) ? connection.models.slice(0, 500) : [], apiKey: connection.apiKey, providerId, envKey };
       });
@@ -661,6 +661,8 @@ export class CodexBridge {
       if (typeof p.turn?.id !== 'string') return;
       const processState = ['completed', 'failed', 'interrupted'].includes(p.turn.status) ? p.turn.status : 'unknown';
       this.state.updateProcess(p.threadId, p.turn.id, processState, processState === 'unknown' ? undefined : new Date().toISOString());
+      const terminalProcess = this.state.turnProcess(p.threadId, p.turn.id);
+      if (processState !== 'unknown' && terminalProcess && !this.state.db.prepare("SELECT key FROM outgoing WHERE json_extract(body,'$.process.id')=? LIMIT 1").get(terminalProcess.id)) this.message(session, `turn:${p.turn.id}:terminal`, processState === 'completed' ? '本次任务已完成。' : processState === 'failed' ? '本次任务异常结束。' : '本次任务已停止。', 'activity', undefined, false, undefined, p.turn.id);
       this.completedTurns.add(p.turn.id);
       if (session.turnId && session.turnId !== p.turn.id) return;
       session.turnId = null; session.state = p.turn.status === 'failed' ? 'failed' : p.turn.status === 'interrupted' ? 'interrupted' : p.turn.status === 'completed' ? 'idle' : 'unknown';
@@ -745,7 +747,7 @@ export class CodexBridge {
       } else if (p.tool === 'agent_inbox_send') {
         if (typeof args.title !== 'string' || !args.title.trim() || typeof args.text !== 'string' || !args.text.trim()) throw new Error('Title and text required');
         const conversation: Conversation = await this.gateway.call('/connector/conversations', { title: args.title.slice(0, 120), projectId: session.projectId, clientConversationId: stableKey(key) });
-        this.state.put({ key: `tool:${key}`, conversationId: conversation.id, text: this.safe(args.text, 100_000), kind: 'chat', streaming: false });
+        this.state.put({ key: `tool:${key}`, conversationId: conversation.id, text: this.safe(args.text, 100_000), kind: 'chat', streaming: false, proactive: true });
         result = { conversationId: conversation.id, delivery: 'queued' };
       } else if (p.tool === 'agent_inbox_profile') {
         const patch: Record<string, string> = {};
@@ -858,7 +860,7 @@ export class CodexBridge {
       const message: Outgoing = JSON.parse(row.body as string);
       let messageId = row.message_id as string | null;
       if (!messageId) {
-        const created: Message = await this.gateway.call(`/connector/conversations/${message.conversationId}/messages`, { text: message.text, kind: message.kind, ...(message.label ? { label: message.label } : {}), ...(message.process ? { process: message.process } : {}), streaming: message.streaming, attachmentIds: message.attachmentIds ?? [], clientMessageId: row.key });
+        const created: Message = await this.gateway.call(`/connector/conversations/${message.conversationId}/messages`, { text: message.text, kind: message.kind, ...(message.proactive ? { proactive: true } : {}), ...(message.label ? { label: message.label } : {}), ...(message.process ? { process: message.process } : {}), streaming: message.streaming, attachmentIds: message.attachmentIds ?? [], clientMessageId: row.key });
         messageId = created.id;
       }
       await this.gateway.call(`/connector/messages/${messageId}`, { text: message.text, streaming: message.streaming, ...(message.label ? { label: message.label } : {}), ...(message.process ? { process: message.process } : {}) }, false, 'PATCH');
