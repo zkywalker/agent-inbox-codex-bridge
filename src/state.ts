@@ -7,7 +7,7 @@ import type { MessageKind, MessageProcess, RuntimeActivity } from '../shared/pro
 import type { CodexOptions } from '../shared/codex-settings.js';
 
 export interface Session extends CodexSession { provider: string; usage?: RuntimeReport['usage']; lastUsedModel?: string; reasoningEffort?: string | null; environment?: RuntimeReport['environment']; settingsRevision?: number; nativeSettings?: Record<string, any>; initialOptions?: CodexOptions }
-export interface Outgoing { key: string; conversationId: string; text: string; kind: MessageKind; label?: string; streaming: boolean; attachmentIds?: string[]; process?: MessageProcess; runtimeActivity?: RuntimeActivity; proactive?: boolean }
+export interface Outgoing { key: string; conversationId: string; text: string; kind: MessageKind; label?: string; streaming: boolean; attachmentIds?: string[]; process?: MessageProcess; runtimeActivity?: RuntimeActivity; proactive?: boolean; notificationProcessId?: string }
 export interface PublishedFile {
   clientFileId: string; attachmentId?: string; conversationId: string; projectId: string;
   projectRoot: string; path: string; name: string; size: number; version: string;
@@ -109,7 +109,9 @@ export class BridgeState {
   updateProcess(threadId: string, turnId: string | null | undefined, state: MessageProcess['state'], completedAt?: string) {
     const prior = this.turnProcess(threadId, turnId);
     if (!prior || !['running', 'waiting'].includes(prior.state)) return;
-    this.saveProcess({ id: prior.id, startedAt: prior.startedAt, state, ...(completedAt ? { completedAt } : {}) });
+    const result = state === 'completed' ? this.db.prepare("SELECT body FROM outgoing WHERE json_extract(body,'$.notificationProcessId')=? AND json_extract(body,'$.kind')='chat' AND json_extract(body,'$.streaming')=0 ORDER BY rowid DESC LIMIT 1").get(prior.id) : undefined;
+    const summary = result ? (JSON.parse(result.body as string) as Outgoing).text.slice(0, 2000) : undefined;
+    this.saveProcess({ id: prior.id, startedAt: prior.startedAt, state, ...(completedAt ? { completedAt } : {}), ...(summary ? { summary } : {}) });
   }
   private saveProcess(process: MessageProcess) {
     // Commit the lifecycle and every pending/published record together, including

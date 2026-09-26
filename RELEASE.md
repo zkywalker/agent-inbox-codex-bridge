@@ -1,5 +1,9 @@
 # Release and Host Update Contract
 
+## Notification summary release 0.1.8
+
+Deploy the gateway supporting completed `process.summary` before this version. Final replies are correlated to the same native turn locally; only completed turns carry a bounded excerpt in their durable terminal records. Missing final replies never borrow another turn's text. Permissions, native CLI, signing keys and Supervisor contracts are unchanged. Gateway tests cover the simulated native lifecycle; real model and notification delivery acceptance are separate.
+
 ## Release inputs
 
 Release tags use semantic versions such as `v1.2.3`. A release contains a platform bundle, `manifest.json`, `checksums.txt`, an SBOM and a provenance attestation. The release workflow must run from a protected environment and must not accept arbitrary artifact paths from a caller.

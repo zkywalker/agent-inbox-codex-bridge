@@ -126,7 +126,8 @@ export class CodexBridge {
     if (!text.trim() && !attachmentIds?.length) return;
     const process = kind === 'activity' || kind === 'system' && label === '过程说明'
       ? this.state.outgoing(key)?.process ?? (session.threadId ? this.state.turnProcess(session.threadId, turnId) : undefined) : undefined;
-    this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}) });
+    const notificationProcessId = kind === 'chat' && session.threadId ? this.state.turnProcess(session.threadId, turnId)?.id : undefined;
+    this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}), ...(notificationProcessId ? { notificationProcessId } : {}) });
   }
   async initialize() {
     await this.initializeNative(!!process.env.BRIDGE_UPDATE_OPERATION_ID);
