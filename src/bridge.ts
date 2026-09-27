@@ -45,8 +45,9 @@ export class CodexBridge {
     if (this.healthProbePending || this.stopped || !this.runtimeReady || this.configurationChanging || this.updateTask || updating(this.updateInfo.status)) return;
     this.healthProbePending = true;
     const rpc = this.rpc;
-    try { await rpc.request('account/read', {}, 5000); if (rpc === this.rpc && !this.stopped) this.onHealth?.({ component: 'native', code: 'healthy' }); }
-    catch { if (rpc === this.rpc && !this.stopped && !this.updateTask && !updating(this.updateInfo.status)) this.onHealth?.({ component: 'native', code: 'codex_unavailable' }); }
+    const current = () => rpc === this.rpc && !this.stopped && this.runtimeReady && !this.configurationChanging && !this.updateTask && !updating(this.updateInfo.status);
+    try { await rpc.request('account/read', {}, 5000); if (current()) this.onHealth?.({ component: 'native', code: 'healthy' }); }
+    catch { if (current()) this.onHealth?.({ component: 'native', code: 'codex_unavailable' }); }
     finally { this.healthProbePending = false; }
   }
   readonly gateway: Gateway;
@@ -161,6 +162,7 @@ export class CodexBridge {
   }
   private async initializeNative(strict = false) {
     this.runtimeReady = false;
+    const rpc = this.rpc;
     this.onHealth?.({ component: 'native', code: 'starting' });
     const info = await this.rpc.request('initialize', { clientInfo: { name: 'agent_inbox', title: 'Agent Inbox', version: '0.1.0' }, capabilities: { experimentalApi: true } });
     this.rpc.notify('initialized');
@@ -173,8 +175,20 @@ export class CodexBridge {
     // Resume existing mappings to get a real native state; never replace a missing thread.
     for (const session of this.sessions.values()) {
       try { await this.ensureThread(session); }
-      catch { session.state = 'failed'; session.error = '原生会话恢复失败，请检查主机上的 Codex；此话题没有创建替代会话。'; this.changed(session); if (strict) throw new Error('update_reconnect_failed'); }
+      catch (error) {
+        const uncertain = error instanceof RpcError && error.uncertain;
+        const missing = error instanceof RpcError && /(?:no rollout found|thread not found|thread .* not found|no thread found)/i.test(error.message);
+        session.state = uncertain ? 'unknown' : 'failed';
+        session.error = uncertain ? '原生会话恢复结果不确定，请检查主机上的 Codex；未重放输入。'
+          : missing ? 'Codex 找不到原生会话记录；此话题保留原映射，未创建替代会话。'
+          : '原生会话恢复失败，请检查主机上的 Codex；此话题没有创建替代会话。';
+        this.changed(session);
+        if (strict) throw new Error('update_reconnect_failed');
+        if (uncertain || this.stopped || rpc !== this.rpc) throw error;
+      }
     }
+    await rpc.request('account/read', {}, 5000);
+    if (this.stopped || rpc !== this.rpc) throw new Error('unavailable');
     this.runtimeReady = true;
     this.onHealth?.({ component: 'native', code: 'healthy' });
   }
@@ -182,12 +196,15 @@ export class CodexBridge {
     if (this.registration) return this.registration;
     this.registration = (async () => {
       this.registered = false;
+      const rpc = this.rpc;
+      if (this.stopped || !this.runtimeReady) throw new Error('unavailable');
       this.epoch = randomUUID();
       await this.publishProjects();
       for (const session of this.sessions.values()) {
         await this.publishSession(session);
       }
       await this.publishInstance();
+      if (this.stopped || !this.runtimeReady || rpc !== this.rpc) throw new Error('unavailable');
       this.registered = true;
       this.onHealth?.({ component: 'registration', code: 'healthy', instanceId: this.epoch });
     })();
@@ -398,14 +415,25 @@ export class CodexBridge {
   private async restartForManagedConnections() {
     if (this.stopped) throw new Error('unavailable');
     this.runtimeReady = false;
-    this.rpc.onExit = () => {};
-    this.rpc.onMessage = () => {};
-    await this.rpc.closeAndWait();
-    this.version = null; this.loaded.clear(); this.inventories.clear(); this.managementTargets.clear(); this.mcpStatuses.clear(); this.allowed = null;
-    for (const session of this.sessions.values()) { session.state = 'unknown'; session.turnId = null; this.changed(session); }
-    this.rpc = new CodexRpc(this.config.codexBinary, undefined, this.config.projects[0].path, this.runtimeEnv());
-    this.attachRpc(this.rpc);
-    await this.initializeNative(true);
+    this.registered = false;
+    try {
+      this.rpc.onExit = () => {};
+      this.rpc.onMessage = () => {};
+      await this.rpc.closeAndWait();
+      if (this.stopped) throw new Error('unavailable');
+      this.version = null; this.loaded.clear(); this.inventories.clear(); this.managementTargets.clear(); this.mcpStatuses.clear(); this.allowed = null;
+      for (const session of this.sessions.values()) { session.state = 'unknown'; session.turnId = null; this.changed(session); }
+      this.rpc = new CodexRpc(this.config.codexBinary, undefined, this.config.projects[0].path, this.runtimeEnv());
+      this.attachRpc(this.rpc);
+      await this.initializeNative();
+    }
+    catch (error) {
+      this.registered = false;
+      this.onHealth?.({ component: 'native', code: 'codex_unavailable' });
+      await this.stopAndWait();
+      throw error;
+    }
+    this.registered = false;
     await this.register();
   }
   private async syncManagedConnections() {
@@ -425,8 +453,11 @@ export class CodexBridge {
       const changed = JSON.stringify(prior.map(connection => ({ ...connection, apiKey: undefined }))) !== JSON.stringify(connections.map(connection => ({ ...connection, apiKey: undefined })))
         || prior.some((connection, index) => connection.apiKey !== connections[index]?.apiKey);
       if (!changed) {
-        this.connectionRevision = desired.revision;
+        const rpc = this.rpc;
+        if (this.stopped || !this.runtimeReady) throw new Error('unavailable');
         await this.gateway.call('/connector/runtime/connections/ack', { revision: desired.revision, ok: true }, true, 'POST');
+        if (this.stopped || !this.runtimeReady || rpc !== this.rpc) throw new Error('unavailable');
+        this.connectionRevision = desired.revision;
         return;
       }
       const config = await this.rpc.request<any>('config/read', { cwd: this.config.projects[0].path, includeLayers: true });
@@ -448,9 +479,12 @@ export class CodexBridge {
         }
       }
       this.state.saveManagedConnections(connections);
-      this.connectionRevision = desired.revision;
       await this.restartForManagedConnections();
+      const rpc = this.rpc;
+      if (this.stopped || !this.runtimeReady || !this.registered) throw new Error('unavailable');
       await this.gateway.call('/connector/runtime/connections/ack', { revision: desired.revision, ok: true }, true, 'POST');
+      if (this.stopped || !this.runtimeReady || rpc !== this.rpc) throw new Error('unavailable');
+      this.connectionRevision = desired.revision;
     })().catch(async error => {
       try { await this.gateway.call('/connector/runtime/connections/ack', { revision: requestedRevision, ok: false, error: error instanceof Error && error.message === 'unsupported' ? 'unsupported' : 'failed' }, true, 'POST'); } catch { /* reconnect loop retries */ }
       throw error;
@@ -1002,7 +1036,7 @@ export class CodexBridge {
       await pause(400);
     }
   }
-  stop() { this.stopped = true; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
+  stop() { this.stopped = true; this.runtimeReady = false; this.registered = false; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
   private async publishBridgeUpdateResult() {
     await this.bridgeUpdate.publish(async confirmation => {
       if (!this.runtimeReady || !this.registered || this.updateBusy(false)) throw new Error('Bridge runtime is not ready for confirmation');
@@ -1013,7 +1047,7 @@ export class CodexBridge {
     if (!this.registered || !this.runtimeReady || !this.version || [...this.sessions.values()].some(session => ['unknown', 'failed'].includes(session.state))) return null;
     return { instanceId: this.epoch, version: this.bridgeVersion };
   }
-  async stopAndWait() { this.stopped = true; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); await this.bridgeUpdate.stop(); await this.rpc.closeAndWait(); }
+  async stopAndWait() { this.stopped = true; this.runtimeReady = false; this.registered = false; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); await this.bridgeUpdate.stop(); await this.rpc.closeAndWait(); }
   resumeBridgeUpdate(operationId: string | null) {
     if (this.bridgeVersion) this.bridgeUpdate.resume(operationId, this.bridgeVersion, this.epoch);
   }

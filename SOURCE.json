@@ -1,13 +1,15 @@
 {
   "repository": "zkywalker/agent-inbox",
-  "baseCommit": "32c08c6e5f522e657725dd434403dbb3732092b5",
+  "baseCommit": "d9ea997179337310d3ea9133bd47ea67a907d56e",
   "adaptations": [
     "Codex paths use src/ and ../shared/.",
     "BridgeManagementUpdate, strict update startup, Supervisor identity and confirmation hooks retained from v0.1.8.",
-    "Existing host safety callbacks and new-topic permission reporting exported without changing fixed Supervisor or private host configuration."
+    "Existing host safety callbacks and new-topic permission reporting exported without changing fixed Supervisor or private host configuration.",
+    "Recovery/readiness fixes imported from the upstream baseCommit; signed update lifecycle and strict update startup retained.",
+    "Recovery regression tests use this package compiled classes and a local JSONL fixture, without a production gateway or model."
   ],
   "files": {
-    "adapters/codex/bridge.ts": "97a1d609f1f2c93928ee9fbd7e180ee08a5def6da470efaea4c65e332d4ac85a",
+    "adapters/codex/bridge.ts": "494d725c0917cad4ddbdc2845188619d148c7ac74ac971f295ec32ecb32c450b",
     "adapters/codex/state.ts": "882263af6ebb16afc139cb7f57284f8473a08cc076959fca014c76bf00a6318e",
     "adapters/codex/gateway.ts": "eb9b28d5842037b37560feeed16151069c39dcfcda42c6ce23d997adf5d63c93",
     "adapters/codex/outgoing.ts": "0307232b0ddabf5656c5e0b614c479eea3058a1de6da981912816968b64d9598",
