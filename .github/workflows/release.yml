@@ -28,12 +28,12 @@ jobs:
           node-version: 22.13.1
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: npm run typecheck && npm run build && npm test
       - name: Package
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p "release/codex-bridge-${version}-${{ matrix.name }}"
-          cp -R dist package.json package-lock.json README.md RELEASE.md HOST-DEPLOYMENT.md supervisor "release/codex-bridge-${version}-${{ matrix.name }}/"
+          cp -R dist package.json package-lock.json README.md RELEASE.md HOST-DEPLOYMENT.md SOURCE.json supervisor "release/codex-bridge-${version}-${{ matrix.name }}/"
           BRIDGE_BUILD_VERSION="$version" node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({version:process.env.BRIDGE_BUILD_VERSION}))' "release/codex-bridge-${version}-${{ matrix.name }}/bridge-version.json"
           (cd "release/codex-bridge-${version}-${{ matrix.name }}" && npm ci --omit=dev --ignore-scripts --no-bin-links)
           COPYFILE_DISABLE=1 tar -C release -czf "codex-bridge-${version}-${{ matrix.name }}.tar.gz" "codex-bridge-${version}-${{ matrix.name }}"

@@ -1,0 +1,17 @@
+{
+  "repository": "zkywalker/agent-inbox",
+  "baseCommit": "32c08c6e5f522e657725dd434403dbb3732092b5",
+  "adaptations": [
+    "Codex paths use src/ and ../shared/.",
+    "BridgeManagementUpdate, strict update startup, Supervisor identity and confirmation hooks retained from v0.1.8.",
+    "Existing host safety callbacks and new-topic permission reporting exported without changing fixed Supervisor or private host configuration."
+  ],
+  "files": {
+    "adapters/codex/bridge.ts": "97a1d609f1f2c93928ee9fbd7e180ee08a5def6da470efaea4c65e332d4ac85a",
+    "adapters/codex/state.ts": "882263af6ebb16afc139cb7f57284f8473a08cc076959fca014c76bf00a6318e",
+    "adapters/codex/gateway.ts": "eb9b28d5842037b37560feeed16151069c39dcfcda42c6ce23d997adf5d63c93",
+    "adapters/codex/outgoing.ts": "0307232b0ddabf5656c5e0b614c479eea3058a1de6da981912816968b64d9598",
+    "adapters/codex/host-safety.ts": "8d2398594b425daf0af9c006509e3ef54db36a30d31e6d0ffef5a13e15501247",
+    "adapters/codex/inspection.ts": "489aea5567f8e2de55bc7781a26e581852cfe85486912fc8a7441bd4182cf182"
+  }
+}

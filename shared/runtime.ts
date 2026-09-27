@@ -1,12 +1,15 @@
 import type { CodexOptions, CodexSelection, CodexSettingsReport } from './codex-settings.js';
 import type { BridgeUpdatePlan } from './bridge-update.js';
 import type { BridgePlatform } from './bridge-release.js';
+import type { ModelCapabilities, ModelCapabilityOverride } from './model-capabilities.js';
 export type ModelApiMode = 'chat_completions' | 'responses' | 'anthropic_messages';
 
 export interface ClaudeSettings { permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions'; effort?: 'low' | 'medium' | 'high' | 'max' }
 export type ClaudeSelection = ClaudeSettings & { model?: string; provider?: string };
 
 export interface ModelConnection {
+  capabilities?: Record<string, ModelCapabilities>;
+  modelOverrides?: Record<string, ModelCapabilityOverride>;
   id: string;
   name: string;
   baseUrl: string;
@@ -19,6 +22,7 @@ export interface ModelConnection {
 }
 
 export interface ModelConnectionInput {
+  modelOverrides?: Record<string, ModelCapabilityOverride>;
   name: string;
   baseUrl: string;
   apiMode: ModelApiMode;

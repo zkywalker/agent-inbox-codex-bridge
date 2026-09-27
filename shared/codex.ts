@@ -33,6 +33,6 @@ export interface CodexAction {
 export interface CodexView {
   enabled: boolean; online: boolean; version: string | null;
   account: 'apiKey' | 'chatgpt' | 'external' | 'missing' | 'unknown';
-  projects: CodexProject[]; session: CodexSession | null; approvals: CodexApproval[];
+  projects: CodexProject[]; session: CodexSession | null; environment?: RuntimeEnvironment; approvals: CodexApproval[];
 }
 import type { RuntimeEnvironment } from './runtime.js';
