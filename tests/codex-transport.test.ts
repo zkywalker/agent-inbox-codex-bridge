@@ -23,6 +23,102 @@ function fixture(t: test.TestContext) {
   t.after(async () => { bridge.stop(); await running; state.close(); });
   return { bridge, state, internals, start: () => { running = internals.controlLoop(); return running!; } };
 }
+function registrationFixture(t: test.TestContext) {
+  const f = fixture(t);
+  const sessions = ['before', 'rejected', 'after'].map(name => {
+    const session: Session = { conversationId: randomUUID(), projectId: 'fixture', threadId: `native-${name}`, turnId: null, model: null, provider: 'native', state: 'idle', error: null };
+    f.bridge.sessions.set(session.conversationId, session); f.internals.changed(session);
+    return session;
+  });
+  for (const status of ['accepted', 'failed', 'uncertain']) f.state.markInput(status, status);
+  const mappings = f.state.sessions();
+  const calls: { path: string; body: any }[] = [];
+  f.bridge.gateway.call = (async (path: string, body?: any) => { calls.push({ path, body }); return {}; }) as typeof f.bridge.gateway.call;
+  return { ...f, sessions, calls, assertPreserved: () => {
+    assert.deepEqual(f.state.sessions(), mappings);
+    assert.deepEqual([...f.bridge.sessions.values()], mappings);
+    for (const status of ['accepted', 'failed', 'uncertain']) assert.equal(f.state.input(status), status);
+    assert.ok(!calls.some(call => call.path.includes('/ack') || call.path.includes('/inbox')));
+  } };
+}
+
+for (const failure of [new GatewayError(404, 'not_found'), new GatewayError(409, 'conflict')]) {
+  for (const position of [0, 1]) test(`registration isolates historical ${failure.status}/${failure.code} at position ${position}`, async t => {
+    const f = registrationFixture(t), rejected = f.sessions[position];
+    const call = f.bridge.gateway.call;
+    f.bridge.gateway.call = (async (path: string, body?: any) => {
+      await call(path, body);
+      if (path === '/connector/codex/session' && body.session.conversationId === rejected.conversationId) throw failure;
+      return {};
+    }) as typeof f.bridge.gateway.call;
+    const epochs = [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      f.internals.registered = false;
+      await f.internals.register();
+      epochs.push(f.internals.epoch);
+      assert.equal(f.internals.registered, true);
+      assert.ok(f.internals.dirtySessions.has(rejected.conversationId));
+      assert.ok(f.internals.sessionRetryAt.get(rejected.conversationId) > Date.now());
+      for (const session of f.sessions.filter(session => session !== rejected)) assert.ok(!f.internals.dirtySessions.has(session.conversationId));
+    }
+    assert.notEqual(epochs[0], epochs[1]);
+    assert.equal(f.calls.filter(call => call.path === '/connector/codex/session').length, 6);
+    assert.equal(f.calls.filter(call => call.path === '/connector/runtime/report' && call.body.conversationId === null).length, 2);
+    f.assertPreserved();
+  });
+}
+
+test('registration isolates a deleted topic between its session and runtime reports', async t => {
+  const f = registrationFixture(t), rejected = f.sessions[1], call = f.bridge.gateway.call;
+  f.bridge.gateway.call = (async (path: string, body?: any) => {
+    await call(path, body);
+    if (path === '/connector/runtime/report' && body.conversationId === rejected.conversationId) throw new GatewayError(404, 'not_found');
+    return {};
+  }) as typeof f.bridge.gateway.call;
+  await f.internals.register();
+  assert.equal(f.internals.registered, true);
+  assert.ok(f.internals.dirtySessions.has(rejected.conversationId));
+  assert.ok(f.calls.some(call => call.path === '/connector/runtime/report' && call.body.conversationId === f.sessions[2].conversationId));
+  f.assertPreserved();
+});
+
+for (const failure of [
+  new GatewayError(401, 'unauthorized'), new GatewayError(403, 'forbidden'),
+  new GatewayError(409, 'reconnect'), new GatewayError(409, 'unavailable'),
+  new GatewayError(404, 'request_failed'), new GatewayError(400, 'validation_error'),
+  new GatewayError(429, 'rate_limited'), new GatewayError(503, 'gateway_unreachable'),
+  new TypeError('fetch failed'), new SyntaxError('invalid response'),
+]) for (const endpoint of ['/connector/codex/session', '/connector/runtime/report']) {
+  test(`registration propagates ${endpoint} ${failure.message}`, async t => {
+    const f = registrationFixture(t), call = f.bridge.gateway.call;
+    f.bridge.gateway.call = (async (path: string, body?: any) => {
+      await call(path, body);
+      if (path === endpoint) throw failure;
+      return {};
+    }) as typeof f.bridge.gateway.call;
+    await assert.rejects(f.internals.register(), (error: unknown) => error === failure);
+    assert.equal(f.internals.registered, false);
+    assert.equal(f.internals.registration, null);
+    assert.ok(!f.calls.some(call => call.path === '/connector/codex/session' && call.body.session.conversationId === f.sessions[1].conversationId));
+    f.assertPreserved();
+  });
+}
+
+for (const endpoint of ['/connector/codex/connect', '/connector/runtime/report']) {
+  test(`registration never isolates instance-level errors from ${endpoint}`, async t => {
+    const f = registrationFixture(t), call = f.bridge.gateway.call;
+    const failure = new GatewayError(404, 'not_found');
+    f.bridge.gateway.call = (async (path: string, body?: any) => {
+      await call(path, body);
+      if (path === endpoint && (endpoint !== '/connector/runtime/report' || body.conversationId === null)) throw failure;
+      return {};
+    }) as typeof f.bridge.gateway.call;
+    await assert.rejects(f.internals.register(), (error: unknown) => error === failure);
+    assert.equal(f.internals.registered, false);
+    f.assertPreserved();
+  });
+}
+
 async function untilAborted(signal?: AbortSignal) {
   if (signal?.aborted) return;
   await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }));

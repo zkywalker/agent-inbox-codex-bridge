@@ -201,7 +201,14 @@ export class CodexBridge {
       this.epoch = randomUUID();
       await this.publishProjects();
       for (const session of this.sessions.values()) {
-        await this.publishSession(session);
+        try { await this.publishSession(session); this.sessionRetryAt.delete(session.conversationId); }
+        catch (error) {
+          // Only topic-scoped rejection is isolatable; reconnect and transport failures fence registration.
+          if (!(error instanceof GatewayError && (error.status === 404 && error.code === 'not_found' || error.status === 409 && error.code === 'conflict'))) throw error;
+          this.dirtySessions.add(session.conversationId);
+          this.sessionRetryAt.set(session.conversationId, Date.now() + 5000);
+          this.log(`historical session report rejected (${error.status}, ${error.code})`);
+        }
       }
       await this.publishInstance();
       if (this.stopped || !this.runtimeReady || rpc !== this.rpc) throw new Error('unavailable');
