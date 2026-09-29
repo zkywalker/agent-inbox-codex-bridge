@@ -220,10 +220,11 @@ export class CodexBridge {
   }
   private async publishSession(session: Session) {
     if (!this.config.projects.some(project => project.id === session.projectId)) { this.dirtySessions.delete(session.conversationId); return; }
-    const snapshot = this.snapshot(session);
-    await this.gateway.call('/connector/codex/session', { instanceId: this.epoch, session: snapshot }, true);
+    const snapshot = this.snapshot(session), epoch = this.epoch;
+    await this.gateway.call('/connector/codex/session', { instanceId: epoch, session: snapshot }, true);
+    if (this.stopped || epoch !== this.epoch) return;
     await this.gateway.call('/connector/runtime/report', this.report(session), true);
-    if (JSON.stringify(snapshot) === JSON.stringify(this.snapshot(session))) this.dirtySessions.delete(session.conversationId);
+    if (!this.stopped && epoch === this.epoch && JSON.stringify(snapshot) === JSON.stringify(this.snapshot(session))) this.dirtySessions.delete(session.conversationId);
   }
   private setUpdate(patch: Partial<CodexUpdateInfo>) {
     this.updateInfo = { ...this.updateInfo, ...patch, updatedAt: new Date().toISOString() };
@@ -295,7 +296,7 @@ export class CodexBridge {
       await this.publishInstance();
       if (this.stopped) throw new Error('update_interrupted');
       installerPending = true;
-      const installed = await this.updater.run(this.config.codexBinary, { signal: this.updateAbort.signal, cwd: this.config.projects[0].path });
+      const installed = await this.updater.run(this.config.codexBinary, { signal: this.updateAbort.signal, cwd: this.config.projects[0].path, registry: this.config.nativeUpdateRegistry });
       installerPending = false;
       if (!installed.ok) {
         const uncertain = ['timeout', 'cancelled', 'output-limit', 'cleanup-failed'].includes(installed.code);
@@ -1001,8 +1002,14 @@ export class CodexBridge {
           if ((this.sessionRetryAt.get(id) ?? 0) > Date.now()) continue;
           const session = this.sessions.get(id);
           if (!session) { this.dirtySessions.delete(id); continue; }
-          try { await this.publishSession(session); this.sessionRetryAt.delete(id); }
+          const epoch = this.epoch;
+          try {
+            await this.publishSession(session);
+            if (this.stopped || epoch !== this.epoch) break;
+            this.sessionRetryAt.delete(id);
+          }
           catch (error) {
+            if (this.stopped || epoch !== this.epoch) break;
             this.sessionRetryAt.set(id, Date.now() + 5000);
             // A rejected historical report must not starve other conversations.
             this.managementFailure(error);

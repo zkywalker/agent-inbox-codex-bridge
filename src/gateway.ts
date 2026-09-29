@@ -11,6 +11,7 @@ export interface BridgeConfig {
   accessClientId?: string; accessClientSecret?: string;
   codexBinary: string; stateDir: string;
   allowNativeUpdate?: boolean;
+  nativeUpdateRegistry?: string;
   projects: { id: string; name: string; path: string }[];
   hostLabel?: string;
   projectRoots?: { id: string; name: string; path: string }[];

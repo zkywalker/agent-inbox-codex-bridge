@@ -124,6 +124,50 @@ async function untilAborted(signal?: AbortSignal) {
   await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }));
 }
 
+for (const failure of [new GatewayError(409, 'reconnect'), new GatewayError(403, 'forbidden')]) {
+  test(`stale historical ${failure.code} cannot fence a newly registered instance`, { timeout: 8000 }, async t => {
+    const f = registrationFixture(t), held = deferred(), started = deferred(), finished = deferred();
+    let first = true;
+    f.internals.transportAbort.signal.addEventListener('abort', held.resolve, { once: true });
+    f.bridge.gateway.call = (async (path: string, _body?: any, _management?: boolean, _method?: string, signal?: AbortSignal) => {
+      if (path === '/connector/codex/session' && first) {
+        first = false; started.resolve(); await held.promise; finished.resolve(); throw failure;
+      }
+      if (path.startsWith('/connector/runtime/connections')) return { revision: 0, connections: null };
+      if (path.startsWith('/connector/codex/inbox?')) { await untilAborted(signal); return { actions: [] }; }
+      if (path.startsWith('/connector/runtime/inbox?')) { await untilAborted(signal); return { requests: [] }; }
+      return {};
+    }) as typeof f.bridge.gateway.call;
+    f.start(); await started.promise;
+    const oldEpoch = f.internals.epoch;
+    await f.internals.register();
+    assert.notEqual(f.internals.epoch, oldEpoch);
+    assert.equal(f.internals.dirtySessions.size, 0);
+    held.resolve(); await finished.promise; await pause(50);
+    assert.equal(f.internals.registered, true);
+    assert.equal(f.internals.managementRetryAt, 0);
+    assert.equal(f.internals.sessionRetryAt.size, 0);
+  });
+}
+
+for (const endpoint of ['/connector/codex/session', '/connector/runtime/report']) {
+  test(`stale successful ${endpoint} cannot acknowledge a new instance's pending report`, async t => {
+    const f = registrationFixture(t), held = deferred(), started = deferred(), session = f.sessions[0];
+    let runtimeReports = 0;
+    f.bridge.gateway.call = (async (path: string) => {
+      if (path === '/connector/runtime/report') runtimeReports++;
+      if (path === endpoint) { started.resolve(); await held.promise; }
+      return {};
+    }) as typeof f.bridge.gateway.call;
+    const publishing = f.internals.publishSession(session);
+    await started.promise;
+    f.internals.epoch = randomUUID();
+    held.resolve(); await publishing;
+    assert.ok(f.internals.dirtySessions.has(session.conversationId));
+    assert.equal(runtimeReports, endpoint === '/connector/codex/session' ? 0 : 1);
+  });
+}
+
 test('Codex control, approvals and heartbeat continue while a historical session report stalls', { timeout: 8000 }, async t => {
   const f = fixture(t), held = deferred(), reportStarted = deferred(), controlled = deferred(), approved = deferred();
   f.internals.transportAbort.signal.addEventListener('abort', held.resolve, { once: true });

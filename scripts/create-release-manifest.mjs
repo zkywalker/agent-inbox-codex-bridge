@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, mkdir, rename, rm } from 'node:fs/promises';
+import { open, mkdir, rename, rm, realpath } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -56,7 +56,7 @@ export async function createReleaseManifest({ directory, version, privateKeyPem,
   return { keyId, manifest };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
   const privateKeyPem = process.env.BRIDGE_MANIFEST_SIGNING_KEY;
   delete process.env.BRIDGE_MANIFEST_SIGNING_KEY;
   try {

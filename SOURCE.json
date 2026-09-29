@@ -15,5 +15,24 @@
     "adapters/codex/outgoing.ts": "0307232b0ddabf5656c5e0b614c479eea3058a1de6da981912816968b64d9598",
     "adapters/codex/host-safety.ts": "8d2398594b425daf0af9c006509e3ef54db36a30d31e6d0ffef5a13e15501247",
     "adapters/codex/inspection.ts": "489aea5567f8e2de55bc7781a26e581852cfe85486912fc8a7441bd4182cf182"
+  },
+  "candidateChanges": {
+    "baseRelease": "0.1.11",
+    "date": "2026-09-29",
+    "upstreamBaseCommit": "76f2a6682d87bf2646ff1c6cb1fb6b33b823c4f5",
+    "upstreamIncludesWorkingTreeChanges": true,
+    "scope": [
+      "Private native-update registry and safe host preflight/lifecycle",
+      "Historical report epoch fencing with signed Bridge update hooks preserved",
+      "Fixed Supervisor compatibility and canonical symlinked CLI entrypoints"
+    ],
+    "upstreamFiles": {
+      "adapters/codex/bridge.ts": "b84752f408cf7943a03a2be3a8b9bebd93dcf8420540648fa5dd29806c988ccf",
+      "adapters/codex/config.ts": "40d534393ca579ad95d2954cc304b265aa2d3436ca5a760f8827d9a04f22368d",
+      "adapters/codex/gateway.ts": "b76610541eb1454589c541bcba4235510d95246169e8b76a9d17439fa0305b19",
+      "adapters/codex/update.ts": "e1a807e53fc992e0dc08cef4e8d0ef6e1d67c1b42c0256949753cdaf2110edfc",
+      "adapters/codex/host-cli.ts": "6e548dace1bd7390ab4256c0c8a5a3d2d44660273abf0250300bf1266957488c",
+      "adapters/codex/host-safety.ts": "8d2398594b425daf0af9c006509e3ef54db36a30d31e6d0ffef5a13e15501247"
+    }
   }
 }

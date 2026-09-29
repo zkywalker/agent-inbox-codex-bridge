@@ -9,9 +9,9 @@ export class ManagedBridgeChild {
   ready = false;
   nonce = null;
   stopping = null;
-  constructor({ root, config, readyTimeoutMs = 60_000, stopTimeoutMs = 40_000, settleMs = 2000, onExit = () => {}, onUpdate = () => {} }) {
+  constructor({ root, config, readyTimeoutMs = 60_000, stopTimeoutMs = 40_000, settleMs = 2000, onExit = () => {}, onUpdate = () => {}, onHealth = () => {} }) {
     this.root = root; this.config = config; this.readyTimeoutMs = readyTimeoutMs; this.stopTimeoutMs = stopTimeoutMs;
-    this.settleMs = settleMs; this.onExit = onExit; this.onUpdate = onUpdate;
+    this.settleMs = settleMs; this.onExit = onExit; this.onUpdate = onUpdate; this.onHealth = onHealth;
   }
   async start(version, operationId = null) {
     if (!this.closed || !this.stopped) throw new Error('Previous Bridge stop is unconfirmed');
@@ -29,6 +29,7 @@ export class ManagedBridgeChild {
       child.on('message', message => {
         if (this.child !== child || !message || message.nonce !== nonce) return;
         if (message.type === 'bridge-stopped') this.stopped = true;
+        if (message.type === 'bridge-health') this.onHealth(message);
         if (message.type === 'bridge-ready' && message.version === version && message.operationId === operationId && typeof message.instanceId === 'string' && /^[0-9a-f-]{36}$/i.test(message.instanceId)) {
           this.ready = true;
           if (!settle) settle = setTimeout(() => finish(), this.settleMs);
@@ -36,9 +37,9 @@ export class ManagedBridgeChild {
         if (['bridge-update-ready', 'bridge-update-status'].includes(message.type) && this.ready) this.onUpdate(message);
       });
       child.once('error', () => { if (!child.pid) this.stopped = true; finish(new Error('Bridge child unavailable')); });
-      child.once('close', () => {
+      child.once('close', (code, signal) => {
         this.closed = true; this.ready = false;
-        finish(new Error('Bridge closed before readiness')); this.onExit();
+        finish(new Error('Bridge closed before readiness')); this.onExit({ code, signal });
       });
       if (!operationId) finish();
     });
