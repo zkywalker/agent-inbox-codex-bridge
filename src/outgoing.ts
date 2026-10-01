@@ -26,6 +26,7 @@ function matches(created: Message, message: Outgoing) {
 /** Delivery retries never execute a runtime. Identity and output live in BridgeState. */
 export class OutgoingTransport {
   private pending?: Promise<number>;
+  processProgressSupported = true;
   constructor(readonly state: BridgeState, readonly gateway: Gateway, readonly now = Date.now) {}
   flush(): Promise<number> {
     if (this.pending) return this.pending;
@@ -47,7 +48,11 @@ export class OutgoingTransport {
         const rows = topics[next++];
         for (const row of rows) {
           if (authenticationFailed) break;
-          const message = outgoingProjection(JSON.parse(row.body as string));
+          let message = outgoingProjection(JSON.parse(row.body as string));
+          if (!this.processProgressSupported && message.process?.progress) {
+            const { progress: _progress, ...process } = message.process;
+            message = { ...message, process };
+          }
           const key = row.key as string, revision = Number(row.revision);
           this.state.attemptedOutgoing(key, this.now());
           try {
