@@ -77,6 +77,11 @@
         },
         "additionalProperties": false
       },
+      "nativeUpdateRegistry": {
+        "type": "string",
+        "maxLength": 2048,
+        "format": "uri"
+      },
       "hostLabel": {
         "type": "string",
         "minLength": 1,

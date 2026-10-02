@@ -15,5 +15,48 @@
     "adapters/codex/outgoing.ts": "0307232b0ddabf5656c5e0b614c479eea3058a1de6da981912816968b64d9598",
     "adapters/codex/host-safety.ts": "8d2398594b425daf0af9c006509e3ef54db36a30d31e6d0ffef5a13e15501247",
     "adapters/codex/inspection.ts": "489aea5567f8e2de55bc7781a26e581852cfe85486912fc8a7441bd4182cf182"
-  }
+  },
+  "candidateChanges": {
+    "baseRelease": "0.1.11",
+    "date": "2026-09-29",
+    "upstreamBaseCommit": "76f2a6682d87bf2646ff1c6cb1fb6b33b823c4f5",
+    "upstreamIncludesWorkingTreeChanges": true,
+    "scope": [
+      "Private native-update registry and safe host preflight/lifecycle",
+      "Historical report epoch fencing with signed Bridge update hooks preserved",
+      "Fixed Supervisor compatibility and canonical symlinked CLI entrypoints"
+    ],
+    "upstreamFiles": {
+      "adapters/codex/bridge.ts": "b84752f408cf7943a03a2be3a8b9bebd93dcf8420540648fa5dd29806c988ccf",
+      "adapters/codex/config.ts": "40d534393ca579ad95d2954cc304b265aa2d3436ca5a760f8827d9a04f22368d",
+      "adapters/codex/gateway.ts": "b76610541eb1454589c541bcba4235510d95246169e8b76a9d17439fa0305b19",
+      "adapters/codex/update.ts": "e1a807e53fc992e0dc08cef4e8d0ef6e1d67c1b42c0256949753cdaf2110edfc",
+      "adapters/codex/host-cli.ts": "6e548dace1bd7390ab4256c0c8a5a3d2d44660273abf0250300bf1266957488c",
+      "adapters/codex/host-safety.ts": "8d2398594b425daf0af9c006509e3ef54db36a30d31e6d0ffef5a13e15501247"
+    }
+  },
+  "exports": [
+    {
+      "at": "2026-10-01T04:36:31.644Z",
+      "upstreamBase": "d4fbd2c9c34e272b05e397b39fe490f9a9ede29c",
+      "note": "Reviewed committed export: provider-neutral speech tool, explicit attachment delivery and durable process progress. Existing signed updater and host lifecycle are preserved.",
+      "files": {
+        "adapters/codex/bridge.ts": "1a3da17e9010afe3cd7065de62743ab9f26dce614875a53ab1ebb019630dfb6b",
+        "adapters/codex/state.ts": "42e685ca0e560ab4023038881be69180332290390c06d756f5aacb6545b6ea8a",
+        "adapters/codex/outgoing.ts": "23b848c44bc8020df07f09f4897a809b7208c46b31f6768abb8e358e25596ff1",
+        "shared/speech-generation.ts": "f04a0d248668117be632dd5145daec08f24bebd75dccb9f823381829dd380574",
+        "shared/speech-tool.ts": "10b055b50b0191ea8c4ecf8898f55e05a6292e8f3bb8c00044244066c9ba48d0",
+        "shared/protocol.ts": "c64cb5bcf8f55fd471c023a4af9aa9e9b985d69b1765265f5025d22f0e16818e"
+      },
+      "upstreamCommit": "2c36c7de10e85af355574f1408e9e4763196724a"
+    },
+    {
+      "at": "2026-10-02",
+      "baseRelease": "v0.1.13",
+      "scope": "Targeted Codex image tool registration and dispatch; existing release source and signed update lifecycle retained. No unrelated workspace changes imported.",
+      "files": {
+        "shared/image-tool.ts": "4af1367a29be052347b3ba9deb3fb7ab90813edd67fd3a558454f6b03289f3a6"
+      }
+    }
+  ]
 }

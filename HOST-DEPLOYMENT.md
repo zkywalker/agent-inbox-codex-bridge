@@ -10,6 +10,10 @@
 - 清理确定的异常退出按 5/10/20/40 秒退避，第 5 次失败暂停；健康 60 秒后重置预算。清理不确定或残留锁要求人工确认完整进程树已退出，不能自动删除锁、重放输入。
 - `node dist/src/main.js --diagnose CONFIG ROOT` 只读本机记录，输出 `config_invalid`、`codex_unavailable`、`auth_failed`、`instance_conflict`、`gateway_unreachable` 等分类、启动失败次数、最后退出码/注册时间与 instance。不会启动竞争实例、输出凭证或调用模型。Supervisor 状态和日志是本地告警，不是手机推送；旧记录与 PID 存活不能证明远端模型健康。
 
+## 原生更新维护
+
+支持可选 npm 镜像和私有原生更新开关，见 [原生更新与维护](docs/native-update.md)。固定 Supervisor 维护仍需确认空闲与备份，不随版本链接自动更新。
+
 ## 1. 部署前提
 
 - macOS 13+（Intel 或 Apple Silicon）或 Linux x86_64。

@@ -14,7 +14,9 @@ export async function controlService({ root, config, plist, action, confirmedIdl
   const extract = key => execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', plist], { encoding: 'utf8' }).trim();
   const label = extract('Label');
   if (!/^com\.agent-inbox\.[a-zA-Z0-9.-]+$/.test(label)) throw new Error('Unexpected service label');
-  if (await realpath(extract('ProgramArguments.1')) !== join(directory, 'supervisor/supervisor.mjs') || await realpath(extract('EnvironmentVariables.AGENT_INBOX_BRIDGE_CONFIG')) !== config || await realpath(extract('EnvironmentVariables.AGENT_INBOX_BRIDGE_ROOT')) !== root) throw new Error('Service target does not match preflight');
+  const supervisor = await realpath(extract('ProgramArguments.1'));
+  const supervisors = [join(directory, 'supervisor/supervisor.mjs'), join(root, 'supervisor/supervisor.mjs')];
+  if (!supervisors.includes(supervisor) || await realpath(extract('EnvironmentVariables.AGENT_INBOX_BRIDGE_CONFIG')) !== config || await realpath(extract('EnvironmentVariables.AGENT_INBOX_BRIDGE_ROOT')) !== root) throw new Error('Service target does not match preflight');
   const domain = `gui/${process.getuid()}`, service = `${domain}/${label}`;
   const loaded = spawnSync('launchctl', ['print', service], { stdio: 'ignore' }).status === 0;
   if (action === 'start' && loaded) throw new Error('Service already loaded; not starting another instance');
@@ -44,7 +46,7 @@ export async function controlService({ root, config, plist, action, confirmedIdl
   run('launchctl', ['bootstrap', domain, plist]);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
   const [action, root, config, plist, confirmation] = process.argv.slice(2);
   controlService({ action, root, config, plist, confirmedIdle: confirmation === '--confirmed-idle' }).catch(() => {
     console.error('[codex-service] operation refused; verify preflight, service identity and idle state; do not bypass the guard'); process.exitCode = 1;

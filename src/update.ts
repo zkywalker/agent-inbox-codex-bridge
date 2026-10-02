@@ -1,8 +1,8 @@
 import childProcess from 'node:child_process';
 import { parseCodexVersion } from './version.js';
 
-export interface CodexUpdateOptions { signal?: AbortSignal; timeoutMs?: number; cwd?: string }
-export type CodexUpdateCode = 'completed' | 'unsupported-platform' | 'spawn-failed' | 'exit-failed' | 'timeout' | 'cancelled' | 'output-limit' | 'cleanup-failed';
+export interface CodexUpdateOptions { signal?: AbortSignal; timeoutMs?: number; cwd?: string; registry?: string }
+export type CodexUpdateCode = 'completed' | 'unsupported-platform' | 'invalid-registry' | 'spawn-failed' | 'exit-failed' | 'timeout' | 'cancelled' | 'output-limit' | 'cleanup-failed';
 export interface CodexUpdateResult { ok: boolean; code: CodexUpdateCode }
 export interface CodexUpdateProbe {
   available: boolean;
@@ -13,7 +13,15 @@ const outputLimit = 64 * 1024;
 const exitGraceMs = 1_000;
 const supportedPlatform = () => process.platform === 'darwin' || process.platform === 'linux';
 
-/** Local options only: callers cannot supply command arguments, URLs, versions or a shell. */
+export function isCodexUpdateRegistry(value: string): boolean {
+  if (value.length > 2048 || /[\s\\?#]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password;
+  } catch { return false; }
+}
+
+/** Local options only: callers cannot supply command arguments, versions or a shell. */
 function timeout(options: CodexUpdateOptions, maximum: number): number {
   return Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(options.timeoutMs!, maximum)) : maximum;
 }
@@ -23,13 +31,13 @@ function timeout(options: CodexUpdateOptions, maximum: number): number {
  * module. POSIX process groups cover the CLI wrapper and installer descendants;
  * Windows stays unavailable until equivalent process-tree ownership is provided.
  */
-function run(binary: string, args: readonly string[], options: CodexUpdateOptions, maximum: number, captureOutput: boolean): Promise<CodexUpdateResult & { output: string }> {
+function run(binary: string, args: readonly string[], options: CodexUpdateOptions, maximum: number, captureOutput: boolean, env?: NodeJS.ProcessEnv): Promise<CodexUpdateResult & { output: string }> {
   if (!supportedPlatform()) return Promise.resolve({ ok: false, code: 'unsupported-platform', output: '' });
   if (options.signal?.aborted) return Promise.resolve({ ok: false, code: 'cancelled', output: '' });
   return new Promise(resolve => {
     let child: ReturnType<typeof childProcess.spawn>;
     try {
-      child = childProcess.spawn(binary, [...args], { cwd: options.cwd, shell: false, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = childProcess.spawn(binary, [...args], { cwd: options.cwd, shell: false, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}) });
     } catch {
       resolve({ ok: false, code: 'spawn-failed', output: '' });
       return;
@@ -111,6 +119,8 @@ export async function readCodexInstalledVersion(binary: string, options: CodexUp
  * could not be confirmed closed or its group was no longer safe to address.
  */
 export async function runCodexUpdate(binary: string, options: CodexUpdateOptions = {}): Promise<CodexUpdateResult> {
-  const { ok, code } = await run(binary, ['update'], options, 5 * 60_000, false);
+  if (options.registry !== undefined && !isCodexUpdateRegistry(options.registry)) return { ok: false, code: 'invalid-registry' };
+  const env = options.registry === undefined ? undefined : { ...process.env, npm_config_registry: options.registry, NPM_CONFIG_REGISTRY: options.registry };
+  const { ok, code } = await run(binary, ['update'], options, 5 * 60_000, false, env);
   return { ok, code };
 }

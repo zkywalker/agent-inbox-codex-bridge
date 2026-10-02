@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isAbsolute } from 'node:path';
 import type { BridgeConfig } from './gateway.js';
+import { isCodexUpdateRegistry } from './update.js';
 
 const defaultCodexSettingsSchema = z.object({
   approvalPolicy: z.enum(['on-request', 'untrusted', 'never']).optional(),
@@ -22,6 +23,7 @@ export const bridgeConfigSchema = z.object({
   accessClientId: z.string().optional(), accessClientSecret: z.string().optional(),
   codexBinary: z.string().min(1), stateDir: z.string().refine(isAbsolute),
   allowNativeUpdate: z.boolean().optional(), defaultCodexSettings: defaultCodexSettingsSchema.optional(),
+  nativeUpdateRegistry: z.string().url().max(2048).refine(isCodexUpdateRegistry, 'Expected a credential-free HTTPS npm registry URL without query or fragment').optional(),
   hostLabel: z.string().trim().min(1).max(120).optional(),
   projectRoots: z.array(projectSchema.extend({ id: z.string().min(1).max(120) })).max(20)
     .refine(roots => new Set(roots.map(root => root.id)).size === roots.length).optional(),

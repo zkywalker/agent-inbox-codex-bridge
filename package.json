@@ -1,6 +1,6 @@
 {
   "name": "@agent-inbox/codex-bridge",
-  "version": "0.1.10",
+  "version": "0.1.14",
   "private": false,
   "type": "module",
   "engines": {
@@ -10,7 +10,7 @@
     "build": "tsc && node scripts/config-contract.mjs",
     "typecheck": "tsc --noEmit",
     "validate": "node dist/src/main.js --validate",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts test/*.test.mjs"
   },
   "dependencies": {
     "zod": "^4.1.5",
