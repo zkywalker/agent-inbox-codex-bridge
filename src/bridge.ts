@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { BridgeManagementUpdate, type BridgeManagementDriver } from './bridge-management-update.js';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as transportDelay } from 'node:timers/promises';
 import type { CodexAction, CodexApproval, CodexView } from '../shared/codex.js';
 import type { Delivery, Message, Conversation } from '../shared/protocol.js';
 import type { RuntimeReport, RuntimeRequest, CodexUpdateInfo } from '../shared/runtime.js';
@@ -7,11 +8,12 @@ import { isCodexRuntimeVersion } from '../shared/runtime.js';
 import { Gateway, GatewayError, type BridgeConfig } from './gateway.js';
 import { CodexRpc, RpcError, type RpcMessage } from './rpc.js';
 import { BridgeState, type ManagedConnection, type Session, type Outgoing, stableKey } from './state.js';
+import { OutgoingTransport } from './outgoing.js';
 import { Projects } from './projects.js';
 import { parseCodexVersion } from './version.js';
 import { probeCodexUpdate, readCodexInstalledVersion, runCodexUpdate } from './update.js';
 import { OnlineFiles } from './files.js';
-import { environment, inspect, text, type Inventory } from './inspection.js';
+import { defaultEnvironment, environment, inspect, text, type Inventory } from './inspection.js';
 import { allowedSettings, legacySettings, rememberedSettings, settingsParams, settingsValues } from './settings.js';
 import { codexOptionsAllowed, selectCodexOptions, type CodexOptions, type CodexSettingsReport } from '../shared/codex-settings.js';
 
@@ -47,7 +49,19 @@ export class CodexBridge {
   }
   readonly bridgeUpdate: BridgeManagementUpdate;
   bridgeVersion: string | null = null;
+  onHealth?: (event: import('./host-safety.js').HostEvent) => void;
+  private healthProbePending = false;
+  async probeHealth() {
+    if (this.healthProbePending || this.stopped || !this.runtimeReady || this.configurationChanging || this.updateTask || updating(this.updateInfo.status)) return;
+    this.healthProbePending = true;
+    const rpc = this.rpc;
+    const current = () => rpc === this.rpc && !this.stopped && this.runtimeReady && !this.configurationChanging && !this.updateTask && !updating(this.updateInfo.status);
+    try { await rpc.request('account/read', {}, 5000); if (current()) this.onHealth?.({ component: 'native', code: 'healthy' }); }
+    catch { if (current()) this.onHealth?.({ component: 'native', code: 'codex_unavailable' }); }
+    finally { this.healthProbePending = false; }
+  }
   readonly gateway: Gateway;
+  private readonly outgoing: OutgoingTransport;
   readonly sessions = new Map<string, Session>();
   readonly pending = new Map<string, PendingApproval>();
   private dirtySessions = new Set<string>();
@@ -58,6 +72,11 @@ export class CodexBridge {
   private epoch = randomUUID();
   private registered = false;
   private stopped = false;
+  private transportAbort = new AbortController();
+  private managementRetryAt = 0;
+  private lastInstanceReportAt = 0;
+  private lastConnectionsCheckAt = 0;
+  private sessionRetryAt = new Map<string, number>();
   private models: any[] = [];
   private projects: Projects;
   readonly files: OnlineFiles;
@@ -84,6 +103,7 @@ export class CodexBridge {
   constructor(readonly config: BridgeConfig, public rpc: CodexRpc, readonly state: BridgeState, private readonly updater = nativeUpdateDriver, bridgeUpdater?: BridgeManagementDriver) {
     this.bridgeUpdate = new BridgeManagementUpdate(state, bridgeUpdater);
     this.gateway = new Gateway(config);
+    this.outgoing = new OutgoingTransport(state, this.gateway);
     this.defaultOptions = selectCodexOptions(config.defaultCodexSettings ?? {});
     this.projects = new Projects(config, state);
     this.updateInfo = state.nativeUpdate() ?? { supported: false, reason: config.allowNativeUpdate ? 'unavailable' : 'disabled', status: 'idle', operationId: null, fromVersion: null, toVersion: null, error: null, updatedAt: new Date().toISOString() };
@@ -103,7 +123,7 @@ export class CodexBridge {
       if (rpc !== this.rpc) return;
       if (!this.stopped) this.onHealth?.({ component: 'native', code: this.updateTask || updating(this.updateInfo.status) ? 'starting' : 'codex_unavailable' });
       this.runtimeReady = false;
-      if (!this.updateTask && !updating(this.updateInfo.status)) { this.stopped = true; this.registered = false; this.files.stop(); }
+      if (!this.updateTask && !updating(this.updateInfo.status)) { this.stopped = true; this.registered = false; this.transportAbort.abort(); this.files.stop(); }
       this.state.loseRuntime();
       for (const session of this.sessions.values()) {
         session.state = 'unknown'; session.turnId = null; this.changed(session);
@@ -137,7 +157,8 @@ export class CodexBridge {
     if (!text.trim() && !attachmentIds?.length) return;
     const process = kind === 'activity' || kind === 'system' && label === '过程说明'
       ? this.state.outgoing(key)?.process ?? (session.threadId ? this.state.turnProcess(session.threadId, turnId) : undefined) : undefined;
-    this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}) });
+    const notificationProcessId = kind === 'chat' && session.threadId ? this.state.turnProcess(session.threadId, turnId)?.id : undefined;
+    this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}), ...(notificationProcessId ? { notificationProcessId } : {}) });
   }
   async initialize() {
     await this.initializeNative(!!process.env.BRIDGE_UPDATE_OPERATION_ID);
@@ -224,7 +245,10 @@ export class CodexBridge {
   private publishInstance() {
     // Capture the latest state inside the queue. A slow old heartbeat must not
     // overwrite a newer update phase or its final proof.
-    const report = this.instanceReports.catch(() => {}).then(async () => { await this.gateway.call('/connector/runtime/report', this.report(null), true); });
+    const report = this.instanceReports.catch(() => {}).then(async () => {
+      await this.gateway.call('/connector/runtime/report', this.report(null), true);
+      this.lastInstanceReportAt = Date.now();
+    });
     this.instanceReports = report;
     return report;
   }
@@ -333,17 +357,18 @@ export class CodexBridge {
     const provider = session?.provider || this.defaults.provider;
     const inventory = this.inventories.get(session?.conversationId ?? '');
     const providerLabel = inventory?.providers?.find(item => item.id === provider)?.name || (provider === 'codex' ? 'Codex 已配置连接' : provider);
+    const observedEnvironment = session?.environment ?? (!session ? defaultEnvironment(this.config.defaultCodexSettings, this.config.hostLabel || 'Codex 主机') : undefined);
     return {
       conversationId: session?.conversationId ?? null, runtimeVersion: this.runtimeReady ? this.version : null,
-      ...(!session && this.bridgeVersion ? { bridgeVersion: this.bridgeVersion } : {}),
+      ...(!session ? { codexUpdate: this.updateInfo } : {}),
       codexInstanceId: this.epoch,
+      ...(!session && this.bridgeVersion ? { bridgeVersion: this.bridgeVersion } : {}),
       ...(!session && this.bridgeUpdate.info ? { bridgeUpdate: this.bridgeUpdate.info } : {}),
       ...(!session && this.bridgeUpdate.capability ? { bridgeUpdateCapability: this.bridgeUpdate.capability } : {}),
-      ...(!session ? { codexUpdate: this.updateInfo } : {}),
       capabilities: { inspect: true, switchModel: true, syncConnections: true, readFiles: false, reasoning: true, manageProjects: this.projects.enabled, updateSettings: !!this.allowed, manageSkills: !!session && !!inventory?.skills?.some(item => item.mutable), manageMcp: !!session && !!inventory?.mcp?.some(item => item.mutable) },
       ...(this.allowed ? { codex: { values: session ? settingsValues(session.nativeSettings ?? {}) : this.defaultOptions, source: session ? 'runtime' as const : 'defaults' as const, allowed: this.allowed } } : {}),
       reasoning: { effort: session ? session.reasoningEffort ?? null : this.defaults.effort },
-      ...(session?.environment ? { environment: session.environment } : {}),
+      ...(observedEnvironment ? { environment: observedEnvironment } : {}),
       model: model ? { model, provider, providerLabel, scope: session ? 'conversation' : 'instance', source: session ? 'session' : 'configuration' } : null,
       lastUsedModel: session?.lastUsedModel ? { model: session.lastUsedModel, provider } : null,
       models: this.models.map(model => ({ id: model.model, model: model.model, provider, providerLabel, reasoningEfforts: (model.supportedReasoningEfforts ?? []).slice(0, 20).map((effort: any) => ({ id: text(effort.reasoningEffort), description: text(effort.description, 1000) })), defaultReasoningEffort: text(model.defaultReasoningEffort) || null })),
@@ -400,6 +425,7 @@ export class CodexBridge {
   private async restartForManagedConnections() {
     if (this.stopped) throw new Error('unavailable');
     this.runtimeReady = false;
+    this.registered = false;
     try {
       this.rpc.onExit = () => {};
       this.rpc.onMessage = () => {};
@@ -488,9 +514,12 @@ export class CodexBridge {
     const project = this.project(session);
     const remembered = session.nativeSettings;
     const restore = { ...(session.threadId ? {} : this.defaultOptions), ...settingsValues(remembered ?? {}), ...session.initialOptions };
+    if (!session.threadId && Object.keys(restore).length && (!this.allowed || !codexOptionsAllowed(restore, this.allowed))) throw new Error('主机管理要求不允许新话题的权限配置，请检查主机默认或话题预选。');
     const profile = remembered?.activePermissionProfile?.id;
     const preserveProfile = typeof profile === 'string' && !profile.startsWith(':') && session.initialOptions?.sandboxMode === undefined && session.initialOptions?.networkAccess === undefined;
-    const common = { cwd: project.path, ...(remembered?.approvalPolicy ? { approvalPolicy: remembered.approvalPolicy } : {}), ...(remembered?.approvalsReviewer ? { approvalsReviewer: remembered.approvalsReviewer } : {}), ...(preserveProfile ? { permissions: profile } : restore.sandboxMode ? { sandbox: restore.sandboxMode } : {}), developerInstructions: instruction, ...(session.model ? { model: session.model } : {}), ...(session.reasoningEffort ? { config: { model_reasoning_effort: session.reasoningEffort } } : {}) };
+    const approvalPolicy = remembered?.approvalPolicy ?? restore.approvalPolicy;
+    const approvalsReviewer = remembered?.approvalsReviewer ?? restore.approvalsReviewer;
+    const common = { cwd: project.path, ...(approvalPolicy ? { approvalPolicy } : {}), ...(approvalsReviewer ? { approvalsReviewer } : {}), ...(preserveProfile ? { permissions: profile } : restore.sandboxMode ? { sandbox: restore.sandboxMode } : {}), developerInstructions: instruction, ...(session.model ? { model: session.model } : {}), ...(session.reasoningEffort ? { config: { model_reasoning_effort: session.reasoningEffort } } : {}) };
     if (preserveProfile) { delete restore.sandboxMode; delete restore.networkAccess; }
     const native = session.threadId
       ? await this.rpc.request('thread/resume', { ...common, threadId: session.threadId })
@@ -714,7 +743,9 @@ export class CodexBridge {
       session.turnId = null; session.state = p.turn.status === 'failed' ? 'failed' : p.turn.status === 'interrupted' ? 'interrupted' : p.turn.status === 'completed' ? 'idle' : 'unknown';
       session.error = p.turn.error?.message ? this.safe(p.turn.error.message) : null;
       for (const approval of this.pending.values()) if (approval.session === session && approval.body.turnId === p.turn.id) { approval.resolved = true; approval.resolve?.(); }
-      if (session.state !== 'idle') this.message(session, `turn:${p.turn.id}:end`, session.error ?? '本次执行已停止。');
+      const priorError = session.error ? this.state.outgoing(`error:${p.turn.id}:${stableKey(session.error)}`) : undefined;
+      const matchingError = priorError?.kind === 'system' && priorError.text === session.error;
+      if (session.state !== 'idle' && !matchingError) this.message(session, `turn:${p.turn.id}:end`, session.error ?? '本次执行已停止。', 'system', session.state === 'failed' ? '操作失败' : undefined);
       this.state.finishStreams(session.conversationId);
       this.changed(session);
     } else if (method === 'thread/tokenUsage/updated') {
@@ -749,7 +780,9 @@ export class CodexBridge {
     } else if (method === 'error') {
       const error = this.safe(p.error?.message ?? 'Codex 执行错误');
       if (!p.willRetry) { session.error = error; this.changed(session); }
-      this.message(session, `error:${p.turnId}:${stableKey(error)}`, error, p.willRetry ? 'activity' : 'system', p.willRetry ? '连接重试' : undefined, false, undefined, p.turnId);
+      const turnEnd = this.state.outgoing(`turn:${p.turnId}:end`);
+      const matchingTurnEnd = !p.willRetry && turnEnd?.kind === 'system' && turnEnd.text === error;
+      if (!matchingTurnEnd) this.message(session, `error:${p.turnId}:${stableKey(error)}`, error, p.willRetry ? 'activity' : 'system', p.willRetry ? '连接重试' : '操作失败', false, undefined, p.turnId);
     }
   }
   private onRequest(message: RpcMessage) {
@@ -894,24 +927,14 @@ export class CodexBridge {
       await this.gateway.call(`/connector/runtime/requests/${request.id}/result`, { ok: true, report: this.report(session ?? null), ...(result ? { result } : {}) }, true);
     } catch (e) {
       if (request.kind === 'update-bridge' && this.bridgeUpdate.reject(request, this.bridgeVersion, this.epoch)) {
-        await this.publishBridgeUpdateResult();
-        return;
+        await this.publishBridgeUpdateResult(); return;
       }
       const code = e instanceof Error && ['busy', 'unsupported', 'not_applied', 'unavailable', 'update_unavailable', 'update_bridge_unavailable', 'update_bridge_manifest_invalid'].includes(e.message) ? e.message : 'failed';
       await this.gateway.call(`/connector/runtime/requests/${request.id}/result`, { ok: false, error: code }, true);
     }
   }
   async flushOutgoing() {
-    for (const row of this.state.dirty()) {
-      const message: Outgoing = JSON.parse(row.body as string);
-      let messageId = row.message_id as string | null;
-      if (!messageId) {
-        const created: Message = await this.gateway.call(`/connector/conversations/${message.conversationId}/messages`, { text: message.text, kind: message.kind, ...(message.proactive ? { proactive: true } : {}), ...(message.label ? { label: message.label } : {}), ...(message.process ? { process: message.process } : {}), streaming: message.streaming, attachmentIds: message.attachmentIds ?? [], clientMessageId: row.key });
-        messageId = created.id;
-      }
-      await this.gateway.call(`/connector/messages/${messageId}`, { text: message.text, streaming: message.streaming, ...(message.label ? { label: message.label } : {}), ...(message.process ? { process: message.process } : {}) }, false, 'PATCH');
-      this.state.sent(row.key as string, messageId, Number(row.revision));
-    }
+    return this.outgoing.flush();
   }
   async run() {
     await Promise.all([this.messageLoop(), this.controlLoop(), this.outgoingLoop(), this.files.run(() => this.log('file transfer connection unavailable'))]);
@@ -919,42 +942,102 @@ export class CodexBridge {
     await this.updateTask;
     // Loops have stopped, so this final best-effort drain cannot race an earlier
     // flush. Failed uploads stay durable for the next connection.
-    try { while (this.state.dirty().length) await this.flushOutgoing(); }
+    try { while (this.state.dirty().length && await this.flushOutgoing()) {} }
     catch { this.log('final process status awaiting reconnect'); }
   }
   private async messageLoop() {
+    let failures = 0;
     while (!this.stopped) {
       try {
-        if (!this.registered) { await pause(500); continue; }
-        if (this.bridgeUpdate.busy) { await pause(500); continue; }
-        const inbox = await this.gateway.call<{ deliveries: Delivery[] }>('/connector/inbox?wait=20');
+        if (!this.registered) { await this.managementWait(500); continue; }
+        if (this.bridgeUpdate.busy) { await this.managementWait(500); continue; }
+        const inbox = await this.gateway.pollInbox({ signal: this.transportAbort.signal });
+        failures = 0;
         for (const delivery of inbox.deliveries) {
+          if (this.stopped) break;
           const task = this.accept(delivery).catch(() => this.log('input handling failed'));
           this.inputTasks.add(task); void task.finally(() => this.inputTasks.delete(task));
         }
         if (this.inputTasks.size > 20) await Promise.race(this.inputTasks);
-      } catch { this.log('message connection unavailable'); await pause(1500); }
+      } catch (error) {
+        if (this.stopped) break;
+        this.log('message connection unavailable');
+        await this.managementWait(error instanceof GatewayError && [401, 403].includes(error.status) ? 60_000 : Math.min(30_000, 2000 * 2 ** Math.min(failures++, 4)));
+      }
     }
   }
   private async controlLoop() {
-    while (!this.stopped) {
-      try {
+    // Independent waits keep stop/approval latency unrelated to history uploads.
+    // Configuration changes and runtime requests retain one serialized worker.
+    await Promise.all([
+      this.managementLoop(async () => {
         if (!this.registered) await this.register();
-        await this.publishInstance();
+        const epoch = this.epoch;
+        try {
+          const inbox = await this.gateway.call<{ actions: CodexAction[] }>(`/connector/codex/inbox?instanceId=${epoch}&wait=20`, undefined, true, undefined, this.transportAbort.signal);
+          if (this.stopped || epoch !== this.epoch) return;
+          for (const action of inbox.actions) { if (!this.bridgeUpdate.busy) await this.control(action); }
+        } catch (error) { if (epoch === this.epoch) throw error; }
+      }),
+      this.managementLoop(async () => {
+        if (!this.registered) return;
+        if (Date.now() - this.lastConnectionsCheckAt >= 30_000) {
+          await this.syncManagedConnections(); this.lastConnectionsCheckAt = Date.now();
+        }
+        const epoch = this.epoch;
+        try {
+          const runtime = await this.gateway.call<{ requests: RuntimeRequest[] }>(`/connector/runtime/inbox?wait=20&instanceId=${epoch}`, undefined, true, undefined, this.transportAbort.signal);
+          if (this.stopped || epoch !== this.epoch) return;
+          for (const request of runtime.requests) await this.runtimeControl(request);
+        } catch (error) { if (epoch === this.epoch) throw error; }
+      }),
+      this.managementLoop(async () => {
+        if (!this.registered) return;
+        if (Date.now() - this.lastInstanceReportAt >= 10_000) await this.publishInstance();
         await this.publishUpdateResult();
         await this.publishBridgeUpdateResult();
-        await this.syncManagedConnections();
-        for (const id of this.dirtySessions) { const session = this.sessions.get(id); if (session) await this.publishSession(session); }
-        await this.publishApprovals();
-        const inbox = await this.gateway.call<{ actions: CodexAction[] }>(`/connector/codex/inbox?instanceId=${this.epoch}`, undefined, true);
-        for (const action of inbox.actions) { if (!this.bridgeUpdate.busy) await this.control(action); }
-        const runtime = await this.gateway.call<{ requests: RuntimeRequest[] }>(`/connector/runtime/inbox?wait=0&instanceId=${this.epoch}`, undefined, true);
-        for (const request of runtime.requests) await this.runtimeControl(request);
+      }),
+      this.managementLoop(async () => {
+        if (!this.registered) return;
+        for (const id of [...this.dirtySessions]) {
+          if (this.stopped || !this.registered || this.managementRetryAt > Date.now()) break;
+          if ((this.sessionRetryAt.get(id) ?? 0) > Date.now()) continue;
+          const session = this.sessions.get(id);
+          if (!session) { this.dirtySessions.delete(id); continue; }
+          try { await this.publishSession(session); this.sessionRetryAt.delete(id); }
+          catch (error) {
+            this.sessionRetryAt.set(id, Date.now() + 5000);
+            // A rejected historical report must not starve other conversations.
+            this.managementFailure(error);
+          }
+        }
+      }),
+      this.managementLoop(async () => { if (this.registered) await this.publishApprovals(); }),
+    ]);
+  }
+  private managementFailure(error: unknown) {
+    if (error instanceof GatewayError && error.status === 409 && error.code === 'reconnect') this.registered = false;
+    if (error instanceof GatewayError && [401, 403].includes(error.status)) this.managementRetryAt = Date.now() + 60_000;
+    this.log('management connection unavailable');
+  }
+  private async managementWait(ms: number) {
+    await transportDelay(Math.max(0, ms), undefined, { signal: this.transportAbort.signal }).catch(() => {});
+  }
+  private async managementLoop(work: () => Promise<void>) {
+    let failures = 0;
+    while (!this.stopped) {
+      await this.managementWait(this.managementRetryAt - Date.now());
+      if (this.stopped) break;
+      const started = Date.now();
+      try {
+        await work(); failures = 0;
+        // Older gateways may ignore wait; bound the resulting empty-poll rate.
+        await this.managementWait(1000 - (Date.now() - started));
       } catch (error) {
-        if (error instanceof GatewayError && [401, 403, 409].includes(error.status)) this.registered = false;
-        this.log('management connection unavailable');
+        if (this.stopped) break;
+        this.managementFailure(error);
+        await this.managementWait(Math.min(30_000, 2000 * 2 ** Math.min(failures++, 4)));
       }
-      await pause(1000);
     }
   }
   private async outgoingLoop() {
@@ -963,18 +1046,18 @@ export class CodexBridge {
       await pause(400);
     }
   }
+  stop() { this.stopped = true; this.runtimeReady = false; this.registered = false; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
   private async publishBridgeUpdateResult() {
     await this.bridgeUpdate.publish(async confirmation => {
       if (!this.runtimeReady || !this.registered || this.updateBusy(false)) throw new Error('Bridge runtime is not ready for confirmation');
       await this.gateway.call(`/connector/runtime/requests/${confirmation.operationId}/result`, { ok: confirmation.outcome === 'succeeded', bridgeConfirmation: confirmation, report: { ...this.report(null), busy: false } }, true);
     });
   }
-  stop() { this.stopped = true; this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
   supervisorIdentity() {
     if (!this.registered || !this.runtimeReady || !this.version || [...this.sessions.values()].some(session => ['unknown', 'failed'].includes(session.state))) return null;
     return { instanceId: this.epoch, version: this.bridgeVersion };
   }
-  async stopAndWait() { this.stopped = true; this.updateAbort.abort(); this.files.stop(); await this.bridgeUpdate.stop(); await this.rpc.closeAndWait(); }
+  async stopAndWait() { this.stopped = true; this.runtimeReady = false; this.registered = false; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); await this.bridgeUpdate.stop(); await this.rpc.closeAndWait(); }
   resumeBridgeUpdate(operationId: string | null) {
     if (this.bridgeVersion) this.bridgeUpdate.resume(operationId, this.bridgeVersion, this.epoch);
   }

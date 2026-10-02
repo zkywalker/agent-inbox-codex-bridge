@@ -1,5 +1,17 @@
 # Release and Host Update Contract
 
+## Recovery release 0.1.10
+
+Managed-provider reload isolates deterministic historical thread failures instead of leaving the entire runtime unready. Original thread mappings remain intact; uncertain resume results abort admission without replaying input. Connection revisions advance only after verified recovery, registration and acknowledgement. Stopping and restarting withdraw readiness immediately, and late registration/probe results cannot revive an obsolete runtime.
+
+Native-update strict recovery, signed Bridge update confirmation and fixed Supervisor behavior are retained. This release does not add the host diagnostic CLI or change private configuration, native Codex versions, permissions or model providers. A responding account probe is not model execution evidence. Install only during a confirmed idle maintenance window with a consistent state backup; never interrupt the deployment's own active native task.
+
+The release suite includes local JSONL recovery failures, bounded probes, stop/replacement races, acknowledgement retries and the existing transport isolation tests. These use temporary databases and fixtures, not production messages or model calls.
+
+## Notification summary release 0.1.8
+
+Deploy the gateway supporting completed `process.summary` before this version. Final replies are correlated to the same native turn locally; only completed turns carry a bounded excerpt in their durable terminal records. Missing final replies never borrow another turn's text. Permissions, native CLI, signing keys and Supervisor contracts are unchanged. Gateway tests cover the simulated native lifecycle; real model and notification delivery acceptance are separate.
+
 ## Release inputs
 
 Release tags use semantic versions such as `v1.2.3`. A release contains a platform bundle, `manifest.json`, `checksums.txt`, an SBOM and a provenance attestation. The release workflow must run from a protected environment and must not accept arbitrary artifact paths from a caller.

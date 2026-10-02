@@ -1,9 +1,20 @@
 import type { RuntimeEnvironment, RuntimeReport } from '../shared/runtime.js';
+import type { CodexOptions } from '../shared/codex-settings.js';
 import type { CodexRpc } from './rpc.js';
 import { stableKey } from './state.js';
 
 export type Inventory = Pick<RuntimeReport, 'skills' | 'mcp' | 'providers' | 'inventory'>;
 export const text = (value: unknown, max = 256) => typeof value === 'string' ? value.slice(0, max) : '';
+export function defaultEnvironment(options: CodexOptions | undefined, host: string): RuntimeEnvironment | undefined {
+  if (!options || !Object.keys(options).length) return undefined;
+  const sandbox = ({ 'read-only': 'readOnly', 'workspace-write': 'workspaceWrite', 'danger-full-access': 'dangerFullAccess' } as Record<string, string>)[options.sandboxMode ?? ''] || null;
+  // Bridge configuration is a default intent, not a native capability probe or
+  // a selected project's resolved paths. Do not invent roots from the first project.
+  return { host, project: null, cwd: '', source: 'defaults', sandbox,
+    writableRoots: [],
+    networkAccess: sandbox === 'dangerFullAccess' ? true : options.networkAccess ?? null,
+    approvalPolicy: options.approvalPolicy ?? null, approvalsReviewer: options.approvalsReviewer ?? null };
+}
 export function environment(native: any, host: string, project: string | null, source: RuntimeEnvironment['source']): RuntimeEnvironment {
   const policy = native.sandboxPolicy ?? native.sandbox;
   return { host, project, cwd: text(native.cwd, 2048), source,
