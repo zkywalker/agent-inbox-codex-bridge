@@ -1,23 +1,21 @@
-import { chmod, mkdir, readFile, realpath, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CodexBridge } from './bridge.js';
 import { CodexRpc } from './rpc.js';
 import { BridgeState } from './state.js';
-import { describeStartupError, parseBridgeConfig } from './config.js';
+import { describeStartupError, startupExitCode } from './config.js';
 import { z } from 'zod';
 import { bridgeManagementDriver } from './bridge-management-update.js';
+import { prepareHost, finishHost } from './host-cli.js';
 
 async function main() {
-  const validateOnly = process.argv[2] === '--validate';
-  const path = validateOnly ? process.argv[3] : process.argv[2];
-  if (!path) throw new Error('Usage: node dist-codex/adapters/codex/main.js [--validate] /absolute/path/to/private-config.json');
-  if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077)) throw new Error('Private bridge config must have mode 0600');
-  const config = parseBridgeConfig(JSON.parse(await readFile(path, 'utf8')));
-  for (const project of [...config.projects, ...(config.projectRoots ?? [])]) {
-    project.path = await realpath(project.path);
-    if (!(await stat(project.path)).isDirectory()) throw new Error('Configured project is not a directory');
-  }
-  if (validateOnly) { console.log(`[codex-bridge] configuration valid: ${path}`); return; }
+  const host = await prepareHost();
+  if (!host) return;
+  try { await run(host); await finishHost(host); }
+  catch (error) { await finishHost(host, error); throw error; }
+}
+async function run(host: NonNullable<Awaited<ReturnType<typeof prepareHost>>>) {
+  const { config, path, health } = host;
   await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
   const state = new BridgeState(join(config.stateDir, 'state.sqlite'));
   if (process.platform !== 'win32') await chmod(join(config.stateDir, 'state.sqlite'), 0o600);
@@ -28,7 +26,7 @@ async function main() {
     state.close();
     console.error('[codex-bridge] native update requires host recovery; no Codex process started; see docs/codex.md');
     process.exitCode = 1;
-    return;
+    throw new Error('Native update requires host recovery');
   }
   const nonce = process.env.BRIDGE_SUPERVISOR_NONCE;
   let bridgeUpdater;
@@ -43,6 +41,9 @@ async function main() {
   } catch { state.close(); throw new Error('Invalid Bridge update trust configuration'); }
   const rpc = new CodexRpc(config.codexBinary, undefined, config.projects[0].path);
   const bridge = new CodexBridge(config, rpc, state, undefined, bridgeUpdater);
+  bridge.onHealth = event => health.observe(event);
+  bridge.gateway.onHealth = event => health.observe(event);
+  const probe = setInterval(() => void bridge.probeHealth(), 15_000).unref();
   let shutdown: Promise<void> | undefined;
   const stop = () => { shutdown ??= bridge.stopAndWait(); void shutdown.catch(() => { process.exitCode = 1; }); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -60,10 +61,11 @@ async function main() {
     if (process.send && nonce && identity) process.send({ type: 'bridge-ready', nonce, operationId: process.env.BRIDGE_UPDATE_OPERATION_ID || null, ...identity });
     console.log('[codex-bridge] ready'); await bridge.run();
   } finally {
+    clearInterval(probe);
     try {
       await bridge.stopAndWait(); state.close();
       if (process.send && nonce) process.send({ type: 'bridge-stopped', nonce }, () => { if (process.connected) process.disconnect(); });
     } catch { state.close(); throw new Error('Bridge shutdown requires host recovery'); }
   }
 }
-void main().catch(error => { console.error(`[codex-bridge] startup or runtime failed: ${describeStartupError(error)}`); process.exitCode = 1; });
+void main().catch(error => { console.error(`[codex-bridge] startup or runtime failed: ${describeStartupError(error)}`); process.exitCode = startupExitCode(error); });

@@ -1,4 +1,5 @@
 {
+  "configVersion": 1,
   "gatewayUrl": "https://inbox.example.com",
   "token": "agent-message-token",
   "managementToken": "agent-management-token",

@@ -17,6 +17,7 @@ const projectSchema = z.object({
 }).strict();
 
 export const bridgeConfigSchema = z.object({
+  configVersion: z.literal(1).optional(),
   gatewayUrl: z.string().url(), token: z.string().min(20), managementToken: z.string().min(20),
   accessClientId: z.string().optional(), accessClientSecret: z.string().optional(),
   codexBinary: z.string().min(1), stateDir: z.string().refine(isAbsolute),
@@ -38,9 +39,29 @@ export const bridgeConfigSchema = z.object({
   message: 'accessClientId and accessClientSecret must be provided together', path: ['accessClientId'],
 });
 
-export function parseBridgeConfig(value: unknown): BridgeConfig { return bridgeConfigSchema.parse(value) as BridgeConfig; }
+export const configContract = {
+  kind: 'agent-inbox-codex-config', version: 1, acceptsLegacyUnversioned: true,
+  migration: 'Validate all legacy fields before adding configVersion: 1; never discard unknown fields.',
+  constraints: ['absolute project and state paths', 'unique project/model identities', 'paired Access credentials', 'danger-full-access requires network access'],
+  schema: z.toJSONSchema(bridgeConfigSchema, { unrepresentable: 'any' }),
+};
+
+export function parseBridgeConfig(value: unknown): BridgeConfig {
+  if (value && typeof value === 'object' && 'configVersion' in value && value.configVersion !== 1) throw new Error('config_invalid: unsupported configVersion; supported version is 1; use a compatible release or reviewed migration');
+  return bridgeConfigSchema.parse(value) as BridgeConfig;
+}
+
+export function migrateBridgeConfig(value: unknown): BridgeConfig {
+  return { ...parseBridgeConfig(value), configVersion: 1 };
+}
 
 export function describeStartupError(error: unknown): string {
-  if (error instanceof z.ZodError) return error.issues.map(issue => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('; ');
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof z.ZodError) return error.issues.map(issue => `${issue.path.map(part => typeof part === 'number' ? part : String(part).replace(/[^a-zA-Z0-9_]/g, '')).join('.') || '<root>'}: ${issue.code === 'unrecognized_keys' ? `Unrecognized keys (${issue.keys.slice(0, 8).map(key => /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(key) && !/token|secret|password/i.test(key) ? key : '<redacted-key>').join(', ')}); review against contract 1; no fields were discarded` : issue.code}`).join('; ');
+  return error instanceof Error && (error.message.startsWith('config_invalid:') || ['instance_conflict', 'codex_unavailable'].includes(error.message)) ? error.message : 'Host operation failed; use --diagnose for safe status and recovery guidance';
+}
+
+export function startupExitCode(error: unknown) {
+  if (error instanceof Error && error.message === 'instance_conflict') return 73;
+  if (error instanceof Error && error.message === 'codex_unavailable') return 69;
+  return error instanceof z.ZodError || error instanceof SyntaxError || error instanceof Error && error.message.startsWith('config_invalid:') ? 78 : 1;
 }

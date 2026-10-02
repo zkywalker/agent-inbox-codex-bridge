@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=22.13" },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/config-contract.mjs",
     "typecheck": "tsc --noEmit",
     "validate": "node dist/src/main.js --validate",
     "test": "node --test"

@@ -1,0 +1,201 @@
+{
+  "kind": "agent-inbox-codex-config",
+  "version": 1,
+  "acceptsLegacyUnversioned": true,
+  "migration": "Validate all legacy fields before adding configVersion: 1; never discard unknown fields.",
+  "constraints": [
+    "absolute project and state paths",
+    "unique project/model identities",
+    "paired Access credentials",
+    "danger-full-access requires network access"
+  ],
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "configVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "gatewayUrl": {
+        "type": "string",
+        "format": "uri"
+      },
+      "token": {
+        "type": "string",
+        "minLength": 20
+      },
+      "managementToken": {
+        "type": "string",
+        "minLength": 20
+      },
+      "accessClientId": {
+        "type": "string"
+      },
+      "accessClientSecret": {
+        "type": "string"
+      },
+      "codexBinary": {
+        "type": "string",
+        "minLength": 1
+      },
+      "stateDir": {
+        "type": "string"
+      },
+      "allowNativeUpdate": {
+        "type": "boolean"
+      },
+      "defaultCodexSettings": {
+        "type": "object",
+        "properties": {
+          "approvalPolicy": {
+            "type": "string",
+            "enum": [
+              "on-request",
+              "untrusted",
+              "never"
+            ]
+          },
+          "approvalsReviewer": {
+            "type": "string",
+            "enum": [
+              "user",
+              "auto_review"
+            ]
+          },
+          "sandboxMode": {
+            "type": "string",
+            "enum": [
+              "read-only",
+              "workspace-write",
+              "danger-full-access"
+            ]
+          },
+          "networkAccess": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "hostLabel": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "projectRoots": {
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "projects": {
+        "minItems": 1,
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "maxFileBytes": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 26214400
+      },
+      "maxRemoteFileBytes": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 2147483648
+      },
+      "additionalModels": {
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "reasoningEfforts": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max",
+                  "ultra"
+                ]
+              }
+            },
+            "defaultReasoningEffort": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "gatewayUrl",
+      "token",
+      "managementToken",
+      "codexBinary",
+      "stateDir",
+      "projects"
+    ],
+    "additionalProperties": false
+  }
+}

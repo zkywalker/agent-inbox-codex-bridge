@@ -2,8 +2,10 @@ import { readFile, realpath, stat, mkdir, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Attachment } from '../shared/protocol.js';
 import type { CodexOptions } from '../shared/codex-settings.js';
+import type { HostEvent } from './host-safety.js';
 
 export interface BridgeConfig {
+  configVersion?: 1;
   gatewayUrl: string; token: string; managementToken: string;
   accessClientId?: string; accessClientSecret?: string;
   codexBinary: string; stateDir: string;
@@ -20,6 +22,7 @@ export class GatewayError extends Error {
   constructor(readonly status: number, readonly code: string) { super(`Inbox request failed (${status}, ${code})`); }
 }
 export class Gateway {
+  onHealth?: (event: HostEvent) => void;
   readonly base: URL;
   readonly maxFileBytes: number;
   constructor(readonly config: Omit<BridgeConfig, 'codexBinary' | 'managementToken'> & { codexBinary?: string; managementToken?: string }) {
@@ -37,17 +40,26 @@ export class Gateway {
     }
     if (this.config.accessClientId) headers.set('CF-Access-Client-Id', this.config.accessClientId);
     if (this.config.accessClientSecret) headers.set('CF-Access-Client-Secret', this.config.accessClientSecret);
-    const response = await fetch(new URL(path, this.base), { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(28_000) });
+    let response: Response;
+    const scope = management ? 'management' : 'message';
+    const endpoint = path.split('?')[0].replace(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/gi, ':id');
+    try { response = await fetch(new URL(path, this.base), { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(28_000) }); }
+    catch (error) { if (init.signal?.aborted) throw error; this.onHealth?.({ component: 'gateway', code: 'gateway_unreachable', scope, endpoint }); throw new GatewayError(503, 'gateway_unreachable'); }
     if (!response.ok) {
       const body: any = await response.json().catch(() => ({}));
+      if ([401, 403].includes(response.status)) this.onHealth?.({ component: 'gateway', code: 'auth_failed', scope, endpoint });
+      else if (response.status === 409 && body.error === 'reconnect') this.onHealth?.({ component: 'gateway', code: 'instance_conflict', scope, endpoint });
+      else if (response.status >= 500) this.onHealth?.({ component: 'gateway', code: 'gateway_unreachable', scope, endpoint });
       throw new GatewayError(response.status, typeof body.error === 'string' ? body.error.slice(0, 100) : 'request_failed');
     }
+    const check = path.startsWith('/api/connector/codex/session') ? 'session' : path.startsWith('/api/connector/codex/inbox?') ? 'management_inbox' : path === '/api/connector/profile' ? 'profile' : undefined;
+    if (response.status === 204 || response.headers.get('content-type')?.includes('application/json') || !path.startsWith('/api/connector/')) this.onHealth?.({ component: 'gateway', code: 'healthy', scope, endpoint, ...(check ? { check, httpStatus: response.status } : {}) });
     return response;
   }
   async call<T = any>(path: string, body?: unknown, management = false, method?: string): Promise<T> {
     const response = await this.raw(`/api${path}`, { method: method ?? (body === undefined ? 'GET' : 'POST'), ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) }, management);
     if (response.status === 204) return undefined as T;
-    if (!response.headers.get('content-type')?.includes('application/json')) throw new GatewayError(401, 'access_login_required');
+    if (!response.headers.get('content-type')?.includes('application/json')) { this.onHealth?.({ component: 'gateway', code: 'auth_failed', scope: management ? 'management' : 'message', endpoint: `/api${path}`.split('?')[0].replace(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/gi, ':id') }); throw new GatewayError(401, 'access_login_required'); }
     return response.json() as Promise<T>;
   }
   async download(attachment: Attachment, conversationId: string): Promise<string> {
