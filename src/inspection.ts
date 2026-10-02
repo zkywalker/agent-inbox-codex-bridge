@@ -82,3 +82,16 @@ export async function inspect(rpc: CodexRpc, cwd: string, threadId: string | nul
   }) : null;
   return { config, targets, userLayer, skills, mcp, providers, inventory: { scope: threadId ? 'project' : 'instance', observedAt: new Date().toISOString(), warnings } };
 }
+
+/** Resolve only the runtime's current project-scoped inventory; never accept a browser path. */
+export async function inputSkills(rpc: CodexRpc, cwd: string, ids: string[]) {
+  if (!ids.length) return [];
+  const result = await rpc.request('skills/list', { cwds: [cwd], forceReload: true });
+  const entry = result.data?.find((item: any) => item.cwd === cwd);
+  if (!Array.isArray(entry?.skills)) throw new Error('技能目录暂时不可用，请刷新后重试。');
+  return ids.map(id => {
+    const skill = entry.skills.find((item: any) => typeof item.path === 'string' && stableKey(`skill:${item.path}`) === id);
+    if (!skill?.enabled || typeof skill.name !== 'string') throw new Error('所选技能已失效或被停用，请重新选择。');
+    return { type: 'skill', name: skill.name, path: skill.path };
+  });
+}
