@@ -49,6 +49,14 @@
         "shared/protocol.ts": "c64cb5bcf8f55fd471c023a4af9aa9e9b985d69b1765265f5025d22f0e16818e"
       },
       "upstreamCommit": "2c36c7de10e85af355574f1408e9e4763196724a"
+    },
+    {
+      "at": "2026-10-02",
+      "baseRelease": "v0.1.13",
+      "scope": "Targeted Codex image tool registration and dispatch; existing release source and signed update lifecycle retained. No unrelated workspace changes imported.",
+      "files": {
+        "shared/image-tool.ts": "4af1367a29be052347b3ba9deb3fb7ab90813edd67fd3a558454f6b03289f3a6"
+      }
     }
   ]
 }

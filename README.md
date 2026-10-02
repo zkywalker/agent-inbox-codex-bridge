@@ -2,6 +2,8 @@
 
 Codex Bridge 是运行在 Codex 主机上的出站连接器。它连接 Agent Inbox 网关，并通过本机 stdio 控制官方 Codex App Server；它不是 Codex 的替代实现，也不开放入站端口。
 
+0.1.14 补齐网关图片生成工具：查询权限、生成新图、查询任务，通过已有附件工具发送结果；复用 Owner 保存的模型和 Agent 授权，无需本地 API Key。升级后新建话题生效，旧话题保留原生会话与历史。见 [图片生成](docs/image-generation.md)。
+
 ## 运行边界
 
 - `Bridge` 负责消息、管理请求、会话恢复和受控的 App Server 生命周期。
