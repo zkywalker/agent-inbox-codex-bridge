@@ -43,16 +43,6 @@ const nativeUpdateDriver: NativeUpdateDriver = { probe: probeCodexUpdate, readVe
 const updating = (status: CodexUpdateInfo['status']) => ['updating', 'restarting', 'verifying'].includes(status);
 
 export class CodexBridge {
-  onHealth?: (event: import('./host-safety.js').HostEvent) => void;
-  private healthProbePending = false;
-  async probeHealth() {
-    if (this.healthProbePending || this.stopped || !this.runtimeReady || this.configurationChanging || this.updateTask || updating(this.updateInfo.status)) return;
-    this.healthProbePending = true;
-    const rpc = this.rpc;
-    try { await rpc.request('account/read', {}, 5000); if (rpc === this.rpc && !this.stopped) this.onHealth?.({ component: 'native', code: 'healthy' }); }
-    catch { if (rpc === this.rpc && !this.stopped && !this.updateTask && !updating(this.updateInfo.status)) this.onHealth?.({ component: 'native', code: 'codex_unavailable' }); }
-    finally { this.healthProbePending = false; }
-  }
   readonly bridgeUpdate: BridgeManagementUpdate;
   bridgeVersion: string | null = null;
   onHealth?: (event: import('./host-safety.js').HostEvent) => void;
@@ -168,7 +158,7 @@ export class CodexBridge {
       const summary = this.safe(text, 100_000).split('\n').map(line => line.trim()).find(Boolean) ?? '';
       this.state.observeProgress(process.id, key, progressKind ?? 'note', summary, stableKey(JSON.stringify([text, streaming])), new Date().toISOString());
     }
-    this.state.put({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}), ...(notificationProcessId ? { notificationProcessId } : {}) });
+    this.state.queue({ key, conversationId: session.conversationId, text: this.safe(text, 100_000), kind, label, streaming, attachmentIds, ...(process ? { process } : {}), ...(notificationProcessId ? { notificationProcessId } : {}) });
   }
   async initialize() {
     await this.initializeNative(!!process.env.BRIDGE_UPDATE_OPERATION_ID);
@@ -1076,10 +1066,7 @@ export class CodexBridge {
     }
   }
   private async outgoingLoop() {
-    while (!this.stopped) {
-      try { await this.flushOutgoing(); } catch { this.log('outgoing events awaiting reconnect'); }
-      await pause(400);
-    }
+    await this.outgoing.run(this.transportAbort.signal);
   }
   stop() { this.stopped = true; this.runtimeReady = false; this.registered = false; this.transportAbort.abort(); this.updateAbort.abort(); this.files.stop(); this.rpc.close(); }
   private async publishBridgeUpdateResult() {
