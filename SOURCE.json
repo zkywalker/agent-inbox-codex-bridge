@@ -69,6 +69,21 @@
         "adapters/codex/gateway.ts": "9dbdcb290390d49b2a497fcb03a9c596a138ee4d577080821dfe89bca7195d11",
         "adapters/codex/bridge.ts": "cee2b688fd8829d9e13f699efa68fc42d0d42900cbc94d6210dd2e44e56fb024"
       }
+    },
+    {
+      "at": "2026-10-03",
+      "baseRelease": "v0.1.15",
+      "featureCommit": "c964c434c73dd519bf2e11ea30158807bebb270e",
+      "upstreamCommit": "e46ba06",
+      "note": "Durable next-turn input queues, current-turn steering, per-message native Skill selection and nonblocking cross-turn questions. Existing signed updates and fixed Supervisor lifecycle are retained.",
+      "files": {
+        "shared/codex.ts": "105dac758c8f0ef2e1416a72a87da308659d77bffcb94f260d926e356ebeedb8",
+        "shared/protocol.ts": "15fb1a6d37837b64d8df936c2328de2bdd70181cfd8a162c9bba7a31645f03f4",
+        "shared/runtime.ts": "d25fcb39aeecc366b14d9a30b93dc1ac43de7c2d9cfe2b8a9f0ecd08195774e8",
+        "src/bridge.ts": "3b0fe39ce8122f2e50211e5825a34a7e82b5a5ab0d186a172a8905d54bc18835",
+        "src/gateway.ts": "cf60003a170cf94c6e9151877fec8453eed2c11305fddda3ca4b615cc65f0921",
+        "src/inspection.ts": "f3e061308e0409d4693a94a8fbe785bfd20c51550d4af083af13e20004d3feb5"
+      }
     }
   ]
 }

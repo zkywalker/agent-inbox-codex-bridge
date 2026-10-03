@@ -1,5 +1,11 @@
 # Release and Host Update Contract
 
+## Coding input release 0.1.16
+
+Durable next-turn input queues, current-turn steering, per-message native Skill selection and nonblocking cross-turn questions. Existing signed updates and fixed Supervisor lifecycle are retained.
+
+Requires the gateway coding-input routes and persistent queue storage. A fresh instance report enables the matching controls. Local regression tests are simulated; release installation and real native model acceptance are recorded separately. Install only after confirming the target is idle and preserving its state.
+
 ## Recovery release 0.1.10
 
 Managed-provider reload isolates deterministic historical thread failures instead of leaving the entire runtime unready. Original thread mappings remain intact; uncertain resume results abort admission without replaying input. Connection revisions advance only after verified recovery, registration and acknowledgement. Stopping and restarting withdraw readiness immediately, and late registration/probe results cannot revive an obsolete runtime.
