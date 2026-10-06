@@ -27,6 +27,10 @@ export class BridgeManagementUpdate {
   }
   get busy() { return !!this.record && !this.record.acknowledged; }
   get info() { return this.record?.info; }
+  get reportInfo() {
+    const record = this.record;
+    return record?.acknowledged && ['succeeded', 'failed'].includes(record.info.status) ? undefined : record?.info;
+  }
   get capability() { return this.driver ? { platform: hostBridgePlatform(), safeRetry: true } : undefined; }
   private save(record: BridgeManagementRecord) { this.state.saveBridgeUpdate(record); this.record = record; }
   resume(operationId: string | null, version: string, instanceId: string) {

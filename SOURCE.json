@@ -84,6 +84,12 @@
         "src/gateway.ts": "cf60003a170cf94c6e9151877fec8453eed2c11305fddda3ca4b615cc65f0921",
         "src/inspection.ts": "f3e061308e0409d4693a94a8fbe785bfd20c51550d4af083af13e20004d3feb5"
       }
+    },
+    {
+      "at": "2026-10-06",
+      "baseRelease": "v0.1.16",
+      "baseCommit": "8d77b03",
+      "note": "Targeted ordinary instance report projection for acknowledged settled Bridge updates. Preserve local history, signed plans, rollback retry evidence, authorization and fixed Supervisor. No unrelated workspace changes imported."
     }
   ]
 }

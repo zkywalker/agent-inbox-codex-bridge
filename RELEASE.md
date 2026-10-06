@@ -1,5 +1,11 @@
 # Release and Host Update Contract
 
+## Acknowledged update history release 0.1.17
+
+Ordinary instance reports omit a completed Bridge update after its success or failure confirmation has been acknowledged by the gateway. This allows a host to register after a gateway migration whose retained runtime request history no longer contains that settled operation. The original local request, signed release plan, confirmation and rollback retry evidence remain intact. Active, unacknowledged and uncertain updates continue to be reported under the existing authorization checks.
+
+The release changes only that report projection on top of the signed 0.1.16 baseline. It does not alter gateway authorization, replay an update or input, clear local state, or modify the fixed Supervisor. Local regression tests cover the report and acknowledgement boundary; actual host registration and remote file access require separate deployment acceptance.
+
 ## Coding input release 0.1.16
 
 Durable next-turn input queues, current-turn steering, per-message native Skill selection and nonblocking cross-turn questions. Existing signed updates and fixed Supervisor lifecycle are retained.

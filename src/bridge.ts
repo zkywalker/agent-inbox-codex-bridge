@@ -371,7 +371,7 @@ export class CodexBridge {
       ...(!session ? { codexUpdate: this.updateInfo } : {}),
       codexInstanceId: this.epoch,
       ...(!session && this.bridgeVersion ? { bridgeVersion: this.bridgeVersion } : {}),
-      ...(!session && this.bridgeUpdate.info ? { bridgeUpdate: this.bridgeUpdate.info } : {}),
+      ...(!session && this.bridgeUpdate.reportInfo ? { bridgeUpdate: this.bridgeUpdate.reportInfo } : {}),
       ...(!session && this.bridgeUpdate.capability ? { bridgeUpdateCapability: this.bridgeUpdate.capability } : {}),
       capabilities: { ...(this.gateway.supportsCodingInput ? { inputQueue: true, inputSkills: true, asyncQuestions: true } : {}), inspect: true, switchModel: true, syncConnections: true, readFiles: false, reasoning: true, manageProjects: this.projects.enabled, updateSettings: !!this.allowed, manageSkills: !!session && !!inventory?.skills?.some(item => item.mutable), manageMcp: !!session && !!inventory?.mcp?.some(item => item.mutable) },
       ...(this.allowed ? { codex: { values: session ? settingsValues(session.nativeSettings ?? {}) : this.defaultOptions, source: session ? 'runtime' as const : 'defaults' as const, allowed: this.allowed } } : {}),
