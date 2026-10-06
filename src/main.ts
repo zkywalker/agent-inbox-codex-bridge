@@ -7,14 +7,18 @@ import { describeStartupError, startupExitCode } from './config.js';
 import { z } from 'zod';
 import { bridgeManagementDriver } from './bridge-management-update.js';
 import { prepareHost, finishHost } from './host-cli.js';
+import { LocalHealth } from './local-health.js';
 
 async function main() {
   const host = await prepareHost();
   if (!host) return;
-  try { await run(host); await finishHost(host); }
+  const localHealth = new LocalHealth('codex', host.path);
+  await localHealth.start();
+  try { await run(host, localHealth); await finishHost(host); }
   catch (error) { await finishHost(host, error); throw error; }
+  finally { await localHealth.stop(); }
 }
-async function run(host: NonNullable<Awaited<ReturnType<typeof prepareHost>>>) {
+async function run(host: NonNullable<Awaited<ReturnType<typeof prepareHost>>>, localHealth: LocalHealth) {
   const { config, path, health } = host;
   await mkdir(config.stateDir, { recursive: true, mode: 0o700 });
   const state = new BridgeState(join(config.stateDir, 'state.sqlite'));
@@ -41,8 +45,13 @@ async function run(host: NonNullable<Awaited<ReturnType<typeof prepareHost>>>) {
   } catch { state.close(); throw new Error('Invalid Bridge update trust configuration'); }
   const rpc = new CodexRpc(config.codexBinary, undefined, config.projects[0].path);
   const bridge = new CodexBridge(config, rpc, state, undefined, bridgeUpdater);
+  bridge.onLocalConnection = (connected, status) => connected ? localHealth.success() : localHealth.failure(status);
   bridge.onHealth = event => health.observe(event);
-  bridge.gateway.onHealth = event => health.observe(event);
+  bridge.gateway.onHealth = event => {
+    health.observe(event);
+    if (event.code === 'auth_failed') localHealth.failure(401);
+    else if (event.code === 'instance_conflict') localHealth.failure(409);
+  };
   const probe = setInterval(() => void bridge.probeHealth(), 15_000).unref();
   let shutdown: Promise<void> | undefined;
   const stop = () => { shutdown ??= bridge.stopAndWait(); void shutdown.catch(() => { process.exitCode = 1; }); };
